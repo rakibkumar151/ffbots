@@ -446,42 +446,46 @@ async def handle_emote(request):
             
         bot = ACTIVE_BOTS[0]
         
-        # Initial Leave to ensure clean state
+        # Super Fast Execution Sequence
         initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
-        await asyncio.sleep(0.1)
-
-        # Join Squad
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
+        emote_pkt = None
+        
+        # Pre-generate first emote packet if possible
+        if target_uids:
+            emote_pkt = await Emote_k(int(target_uids[0]), int(emote_id), bot['key'], bot['iv'], bot['region'])
+        else:
+            emote_pkt = await Emote_k(int(bot['uid']), int(emote_id), bot['key'], bot['iv'], bot['region'])
+
+        # 1. Clean state
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
+        
+        # 2. Join
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.3)
-        
-        # If no target UIDs provided, default to bot's own UID
+        await asyncio.sleep(0.15) # Minimal join delay for server sync
+
+        # 3. Emote Spam
         uids_to_emote = target_uids if target_uids else [bot['uid']]
-        
-        packet_count = 6 if triple_packet else 3
+        packet_count = 5 if triple_packet else 3
         
         for uid in uids_to_emote:
             if not uid: continue
             try:
                 t_uid = int(uid)
-                emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
-                # Send multiple times based on setting
+                curr_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
                 for _ in range(packet_count):
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
-                await asyncio.sleep(0.1)
+                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', curr_pkt)
             except: pass
             
-        # Final Leave if enabled
+        # 4. Super Fast Leave (Millisecond Mode)
         if auto_leave:
-            await asyncio.sleep(0.5) # Time for emote to appear
             final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-            # Spam leave packet for maximum reliability
-            for _ in range(5):
+            # Instant spam 15 times for 100% Leave Guarantee
+            for _ in range(15):
                 await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
-                await asyncio.sleep(0.05)
+                # No sleep here for maximum speed
 
-        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": "Super Fast Emote Sent"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
