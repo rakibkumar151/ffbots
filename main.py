@@ -432,6 +432,12 @@ from aiohttp import web
 async def handle_ping(request):
     return web.Response(text="Bot is alive!")
 
+async def leave_squad_packet(key, iv, region):
+    # Try multiple field variations for better compatibility
+    fields = {1: 7, 2: {1: 12480598706}}
+    packet_type = '0514' if region.lower() == "ind" else "0519" if region.lower() == "bd" else "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet_type, key, iv)
+
 async def handle_emote(request):
     try:
         data = await request.json()
@@ -447,20 +453,20 @@ async def handle_emote(request):
         bot = ACTIVE_BOTS[0]
         
         # Pre-generate packets
-        initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        exit_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
         
-        # 1. Force Reset (Ensure we are out of any previous squad)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
-        await asyncio.sleep(0.2) # Essential delay for server to register the leave
+        # 1. Clean Reset
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
+        await asyncio.sleep(0.3) # Wait for server to clear previous state
 
         # 2. Join
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.15) 
+        await asyncio.sleep(0.25) # Slightly longer join delay for better sync
 
         # 3. Emote Spam
         uids_to_emote = target_uids if target_uids else [bot['uid']]
-        packet_count = 5 if triple_packet else 3
+        packet_count = 6 if triple_packet else 3
         
         for uid in uids_to_emote:
             if not uid: continue
@@ -472,26 +478,25 @@ async def handle_emote(request):
                 if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
             except: pass
             
-        # 4. Super Fast Exit + Background Cleanup
+        # 4. Reliable Exit (Anti-Stuck)
         if auto_leave:
-            final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-            
-            # Immediate Spam
-            for _ in range(10):
-                await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave, drain=False)
-            if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
+            await asyncio.sleep(0.3) # Delay before leave to prevent rate-limit
+            # Send 3 times with small delays (More reliable than instant spam)
+            for _ in range(3):
+                await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
+                await asyncio.sleep(0.1)
 
-            # Background "Anti-Stuck" Cleanup: Keep leaving for 2 seconds to be 100% sure
+            # Background Cleanup (Watchdog)
             async def cleanup_leave():
-                for _ in range(4):
-                    await asyncio.sleep(0.5)
+                for _ in range(3):
+                    await asyncio.sleep(1.0)
                     try:
-                        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+                        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
                     except: break
             
             asyncio.create_task(cleanup_leave())
 
-        return web.json_response({"success": True, "message": "Millisecond Mode Executed"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": "Emote sequence completed"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
