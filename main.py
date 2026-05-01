@@ -456,13 +456,13 @@ async def handle_emote(request):
         exit_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
         
-        # 1. Clean Reset
+        # 1. Initial Reset (Ensure bot is ready)
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
-        await asyncio.sleep(0.3) # Wait for server to clear previous state
+        await asyncio.sleep(0.1) 
 
-        # 2. Join
+        # 2. Join Squad
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.25) # Slightly longer join delay for better sync
+        await asyncio.sleep(0.2) # Essential delay for squad sync
 
         # 3. Emote Spam
         uids_to_emote = target_uids if target_uids else [bot['uid']]
@@ -478,25 +478,13 @@ async def handle_emote(request):
                 if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
             except: pass
             
-        # 4. Reliable Exit (Anti-Stuck)
+        # 4. Super Fast Exit (15x Spam as preferred by user)
         if auto_leave:
-            await asyncio.sleep(0.3) # Delay before leave to prevent rate-limit
-            # Send 3 times with small delays (More reliable than instant spam)
-            for _ in range(3):
+            for _ in range(15):
                 await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
-                await asyncio.sleep(0.1)
+            # Drain is handled inside SEndPacKeT by default now
 
-            # Background Cleanup (Watchdog)
-            async def cleanup_leave():
-                for _ in range(3):
-                    await asyncio.sleep(1.0)
-                    try:
-                        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
-                    except: break
-            
-            asyncio.create_task(cleanup_leave())
-
-        return web.json_response({"success": True, "message": "Emote sequence completed"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": "Emote Sequence Executed"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
