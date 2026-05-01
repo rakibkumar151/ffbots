@@ -612,25 +612,44 @@ async def handle_auto_start(request):
         async def web_auto_start_loop():
             try:
                 while not WEB_AUTO_START_STATE['stop_auto']:
+                    if not ACTIVE_BOTS:
+                        print("Auto Start: No bots available, stopping...")
+                        break
+                    
+                    # Always use the first available bot
+                    bot = ACTIVE_BOTS[0]
+                    
+                    # Step 1: Join Team Code
                     join_pkt = await join_teamcode_packet(team_code, bot['key'], bot['iv'], bot['region'])
                     await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(2.5)
+                    
+                    if WEB_AUTO_START_STATE['stop_auto']: break
+                    
+                    # Step 2: Spam Start Match Packet
                     start_pkt = await start_auto_packet(bot['key'], bot['iv'], bot['region'])
-                    end_time = time.time() + start_spam_duration
-                    while time.time() < end_time and not WEB_AUTO_START_STATE['stop_auto']:
+                    # Spam for about 10 seconds to ensure start
+                    for i in range(40): 
+                        if WEB_AUTO_START_STATE['stop_auto']: break
                         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', start_pkt)
-                        await asyncio.sleep(start_spam_delay)
+                        await asyncio.sleep(0.25)
                     
                     if WEB_AUTO_START_STATE['stop_auto']: break
                     
+                    # Step 3: Count game and wait for game to actually begin
                     WEB_AUTO_START_STATE['games_played'] += 1
-                    await asyncio.sleep(wait_after_match)
+                    # Wait for the match to load (adjustable via wait_after_match)
+                    await asyncio.sleep(wait_after_match) 
+                    
                     if WEB_AUTO_START_STATE['stop_auto']: break
+                    
+                    # Step 4: Leave Squad so we can join the next one
                     leave_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
                     await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', leave_pkt)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(2.5)
+                    
             except Exception as e:
-                print(f"Web Auto Start Error: {e}")
+                print(f"Web Auto Start Critical Error: {e}")
             finally:
                 WEB_AUTO_START_STATE['running'] = False
                 WEB_AUTO_START_STATE['task'] = None
