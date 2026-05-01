@@ -63,6 +63,16 @@ wait_after_match = 5
 start_spam_delay = 0.1
 region = 'IN'
 ACTIVE_BOTS = []
+# Load credentials from environment variables for production (e.g., Vercel/Render)
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "NIKI-BOT-2026")
+
+def check_auth(request):
+    auth_header = request.headers.get('Authorization')
+    # Using simple Bearer token for API authentication
+    if not auth_header or auth_header != f"Bearer {ADMIN_PASS}":
+        return False
+    return True
 
 async def AuToUpDaTE():
     while True:
@@ -433,6 +443,8 @@ async def handle_ping(request):
     return web.Response(text="Bot is alive!")
 
 async def handle_emote(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
     try:
         data = await request.json()
         team_code = data.get('team_code')
@@ -480,6 +492,8 @@ async def handle_emote(request):
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
 async def handle_group_invite(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
     try:
         data = await request.json()
         limit = int(data.get('limit', 4))
@@ -515,6 +529,8 @@ async def handle_group_invite(request):
 WEB_AUTO_START_STATE = {'running': False, 'stop_auto': False, 'task': None, 'team_code': None}
 
 async def handle_auto_start(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
     try:
         data = await request.json()
         action = data.get('action')
@@ -571,9 +587,23 @@ async def handle_auto_start(request):
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
 async def handle_bots(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
     try:
         bots = [{"uid": b['uid'], "region": b['region']} for b in ACTIVE_BOTS]
         return web.json_response({"bots": bots}, headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+
+async def handle_login(request):
+    try:
+        data = await request.json()
+        user = data.get('username')
+        pwd = data.get('password')
+        if user == ADMIN_USER and pwd == ADMIN_PASS:
+            return web.json_response({"success": True, "token": ADMIN_PASS}, headers={"Access-Control-Allow-Origin": "*"})
+        else:
+            return web.json_response({"error": "Invalid Username or Password"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
@@ -592,9 +622,11 @@ async def start_web_server():
     app.router.add_post('/api/group_invite', handle_group_invite)
     app.router.add_post('/api/auto_start', handle_auto_start)
     app.router.add_get('/api/bots', handle_bots)
+    app.router.add_post('/api/login', handle_login)
     app.router.add_options('/api/emote', handle_options)
     app.router.add_options('/api/group_invite', handle_options)
     app.router.add_options('/api/auto_start', handle_options)
+    app.router.add_options('/api/login', handle_options)
     
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
