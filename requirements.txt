@@ -1,0 +1,7 @@
+requests
+google-play-scraper
+aiohttp
+protobuf
+protobuf-decoder
+pycryptodome
+urllib3
