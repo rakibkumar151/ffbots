@@ -280,6 +280,9 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                                 await asyncio.sleep(0.2) # Adjusted to 0.2s before leaving
                                 
                                 final_leave = await leave_squad_packet(key, iv, region)
+                                # Send leave 3 times for 100% guarantee
+                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', final_leave)
+                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', final_leave)
                                 await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', final_leave)
                                 
                                 await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Done! Joined {team_code} and sent emote.", uid, chat_id, key, iv, region, bot_state)
@@ -460,6 +463,9 @@ async def handle_emote(request):
         await asyncio.sleep(0.2)
         
         final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        # Send leave 3 times for 100% guarantee from Website
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
 
         return web.json_response({"success": True, "message": f"Emote sent via bot {bot['uid']}"}, headers={"Access-Control-Allow-Origin": "*"})
