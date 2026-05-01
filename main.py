@@ -526,7 +526,55 @@ async def handle_group_invite(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
-WEB_AUTO_START_STATE = {'running': False, 'stop_auto': False, 'task': None, 'team_code': None}
+WEB_AUTO_START_STATE = {
+    'running': False, 
+    'stop_auto': False, 
+    'task': None, 
+    'team_code': None,
+    'games_played': 0,
+    'start_time': None,
+    'bot_uid': None
+}
+
+async def handle_match_bot_stats(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
+    
+    runtime = 0
+    if WEB_AUTO_START_STATE['running'] and WEB_AUTO_START_STATE['start_time']:
+        runtime = int(time.time() - WEB_AUTO_START_STATE['start_time'])
+        
+    return web.json_response({
+        "running": WEB_AUTO_START_STATE['running'],
+        "games_played": WEB_AUTO_START_STATE['games_played'],
+        "runtime": runtime,
+        "bot_uid": WEB_AUTO_START_STATE['bot_uid'],
+        "team_code": WEB_AUTO_START_STATE['team_code']
+    })
+
+async def handle_verify_github_pass(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
+    try:
+        data = await request.json()
+        input_pass = data.get('password')
+        
+        # Placeholder for GitHub Raw URL - replace with actual URL
+        GITHUB_URL = "https://raw.githubusercontent.com/ShahGCreator/pass/main/pass.txt"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(GITHUB_URL) as response:
+                if response.status == 200:
+                    github_pass = (await response.text()).strip()
+                    if input_pass == github_pass:
+                        return web.json_response({"success": True})
+                    else:
+                        return web.json_response({"error": "Invalid Level-Up Password"}, status=401)
+                else:
+                    # Fallback if github is down or URL wrong
+                    return web.json_response({"error": "Auth Server Down"}, status=500)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 async def handle_auto_start(request):
     if not check_auth(request):
@@ -557,6 +605,9 @@ async def handle_auto_start(request):
         WEB_AUTO_START_STATE['stop_auto'] = False
         WEB_AUTO_START_STATE['running'] = True
         WEB_AUTO_START_STATE['team_code'] = team_code
+        WEB_AUTO_START_STATE['bot_uid'] = bot['uid']
+        WEB_AUTO_START_STATE['start_time'] = time.time()
+        WEB_AUTO_START_STATE['games_played'] = 0
         
         async def web_auto_start_loop():
             try:
@@ -569,7 +620,10 @@ async def handle_auto_start(request):
                     while time.time() < end_time and not WEB_AUTO_START_STATE['stop_auto']:
                         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', start_pkt)
                         await asyncio.sleep(start_spam_delay)
+                    
                     if WEB_AUTO_START_STATE['stop_auto']: break
+                    
+                    WEB_AUTO_START_STATE['games_played'] += 1
                     await asyncio.sleep(wait_after_match)
                     if WEB_AUTO_START_STATE['stop_auto']: break
                     leave_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
@@ -580,6 +634,7 @@ async def handle_auto_start(request):
             finally:
                 WEB_AUTO_START_STATE['running'] = False
                 WEB_AUTO_START_STATE['task'] = None
+                WEB_AUTO_START_STATE['start_time'] = None
 
         WEB_AUTO_START_STATE['task'] = asyncio.create_task(web_auto_start_loop())
         return web.json_response({"success": True, "message": f"Auto start initiated for {team_code}"})
@@ -644,6 +699,8 @@ async def start_web_server():
     app.router.add_post('/api/auto_start', handle_auto_start)
     app.router.add_get('/api/bots', handle_bots)
     app.router.add_post('/api/login', handle_login)
+    app.router.add_get('/api/match_bot_stats', handle_match_bot_stats)
+    app.router.add_post('/api/verify_github_pass', handle_verify_github_pass)
     
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
