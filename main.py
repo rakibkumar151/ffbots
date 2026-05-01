@@ -408,6 +408,11 @@ async def run_bot_instance(uid, password):
             ACTIVE_BOTS.append(bot_info)
             print(f"✅ Bot {uid} is now Online!")
             
+            tasks = [
+                asyncio.create_task(TcPChaT(chat_ip, chat_port, auth_token, auth.key, auth.iv, ready, getattr(auth, 'region', 'IND'), bot_state)),
+                asyncio.create_task(TcPOnLine(online_ip, online_port, auth_token, bot_state))
+            ]
+            
             try:
                 await asyncio.gather(*tasks)
             finally:
@@ -472,7 +477,6 @@ async def handle_options(request):
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle_ping)
-    app.router.add_head('/', handle_ping)
     app.router.add_post('/api/emote', handle_emote)
     app.router.add_options('/api/emote', handle_options)
     
