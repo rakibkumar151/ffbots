@@ -438,6 +438,8 @@ async def handle_emote(request):
         team_code = data.get('team_code')
         emote_id = data.get('emote_id')
         target_uids = data.get('target_uids', [])
+        auto_leave = data.get('auto_leave', True)
+        triple_packet = data.get('triple_packet', False)
         
         if not ACTIVE_BOTS:
             return web.json_response({"error": "No bots online to send emote"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
@@ -447,33 +449,37 @@ async def handle_emote(request):
         # Initial Leave to ensure clean state
         initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
 
         # Join Squad
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         
         # If no target UIDs provided, default to bot's own UID
         uids_to_emote = target_uids if target_uids else [bot['uid']]
+        
+        packet_count = 6 if triple_packet else 3
         
         for uid in uids_to_emote:
             if not uid: continue
             try:
                 t_uid = int(uid)
                 emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
-                # Send 4 times for maximum guarantee
-                for _ in range(4):
+                # Send multiple times based on setting
+                for _ in range(packet_count):
                     await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
-                await asyncio.sleep(0.1) # Small delay between targets
+                await asyncio.sleep(0.1)
             except: pass
             
-        await asyncio.sleep(0.2)
-        
-        # Final Leave
-        final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        for _ in range(3):
-            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+        # Final Leave if enabled
+        if auto_leave:
+            await asyncio.sleep(0.5) # Time for emote to appear
+            final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+            # Spam leave packet for maximum reliability
+            for _ in range(5):
+                await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+                await asyncio.sleep(0.05)
 
         return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
