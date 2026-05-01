@@ -156,13 +156,13 @@ async def GetLoginData(base_url, payload, token, Hr):
             print(f"Retrying GetLoginData via Proxy... {e}")
         await asyncio.sleep(2)
 
-async def SEndPacKeT(ChaT, OnLinE, TypE, PacKeT, drain=True):
-    if TypE == 'ChaT' and ChaT:
-        ChaT.write(PacKeT)
-        if drain: await ChaT.drain()
-    elif TypE == 'OnLine' and OnLinE:
-        OnLinE.write(PacKeT)
-        if drain: await OnLinE.drain()
+async def SEndPacKeT(ChaT, OnLinE, TypE, PacKeT):
+    if TypE == 'ChaT':
+        if not ChaT: raise Exception("Chat server disconnected")
+        ChaT.write(PacKeT); await ChaT.drain()
+    elif TypE == 'OnLine':
+        if not OnLinE: raise Exception("Online server disconnected")
+        OnLinE.write(PacKeT); await OnLinE.drain()
 
 async def xAuThSTarTuP(TarGeT, token, timestamp, key, iv):
     uid_hex = hex(TarGeT)[2:]; uid_length = len(uid_hex); encrypted_timestamp = await DecodE_HeX(timestamp)
@@ -432,59 +432,50 @@ from aiohttp import web
 async def handle_ping(request):
     return web.Response(text="Bot is alive!")
 
-async def leave_squad_packet(key, iv, region):
-    # Try multiple field variations for better compatibility
-    fields = {1: 7, 2: {1: 12480598706}}
-    packet_type = '0514' if region.lower() == "ind" else "0519" if region.lower() == "bd" else "0515"
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet_type, key, iv)
-
 async def handle_emote(request):
     try:
         data = await request.json()
         team_code = data.get('team_code')
         emote_id = data.get('emote_id')
         target_uids = data.get('target_uids', [])
-        auto_leave = data.get('auto_leave', True)
-        triple_packet = data.get('triple_packet', False)
         
         if not ACTIVE_BOTS:
             return web.json_response({"error": "No bots online to send emote"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
             
         bot = ACTIVE_BOTS[0]
         
-        # Pre-generate packets
-        exit_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        # Initial Leave to ensure clean state
+        initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
+        await asyncio.sleep(0.05)
+
+        # Join Squad
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
-        
-        # 1. Initial Reset (Ensure bot is ready)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
-        await asyncio.sleep(0.1) 
-
-        # 2. Join Squad
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.2) # Essential delay for squad sync
-
-        # 3. Emote Spam
+        await asyncio.sleep(0.2)
+        
+        # If no target UIDs provided, default to bot's own UID
         uids_to_emote = target_uids if target_uids else [bot['uid']]
-        packet_count = 6 if triple_packet else 3
         
         for uid in uids_to_emote:
             if not uid: continue
             try:
                 t_uid = int(uid)
-                curr_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
-                for _ in range(packet_count):
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', curr_pkt, drain=False)
-                if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
+                emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
+                # Send 4 times for maximum guarantee
+                for _ in range(4):
+                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
+                await asyncio.sleep(0.1) # Small delay between targets
             except: pass
             
-        # 4. Super Fast Exit (15x Spam as preferred by user)
-        if auto_leave:
-            for _ in range(15):
-                await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', exit_pkt)
-            # Drain is handled inside SEndPacKeT by default now
+        await asyncio.sleep(0.2)
+        
+        # Final Leave
+        final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        for _ in range(3):
+            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
 
-        return web.json_response({"success": True, "message": "Emote Sequence Executed"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
@@ -579,18 +570,6 @@ async def handle_auto_start(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
-async def handle_leave(request):
-    try:
-        if not ACTIVE_BOTS: return web.json_response({"error": "No bots online"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
-        bot = ACTIVE_BOTS[0]
-        pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        for _ in range(10):
-            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', pkt, drain=False)
-        if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
-        return web.json_response({"success": True, "message": "Leave command sent"}, headers={"Access-Control-Allow-Origin": "*"})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
-
 async def handle_bots(request):
     try:
         bots = [{"uid": b['uid'], "region": b['region']} for b in ACTIVE_BOTS]
@@ -612,12 +591,10 @@ async def start_web_server():
     app.router.add_post('/api/emote', handle_emote)
     app.router.add_post('/api/group_invite', handle_group_invite)
     app.router.add_post('/api/auto_start', handle_auto_start)
-    app.router.add_post('/api/leave', handle_leave)
     app.router.add_get('/api/bots', handle_bots)
     app.router.add_options('/api/emote', handle_options)
     app.router.add_options('/api/group_invite', handle_options)
     app.router.add_options('/api/auto_start', handle_options)
-    app.router.add_options('/api/leave', handle_options)
     
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
