@@ -444,7 +444,7 @@ async def handle_ping(request):
 
 async def handle_emote(request):
     if not check_auth(request):
-        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
     try:
         data = await request.json()
         team_code = data.get('team_code')
@@ -487,20 +487,20 @@ async def handle_emote(request):
         for _ in range(3):
             await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
 
-        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": str(e)}, status=500)
 
 async def handle_group_invite(request):
     if not check_auth(request):
-        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
     try:
         data = await request.json()
         limit = int(data.get('limit', 4))
         target_uid = data.get('target_uid')
         
         if not ACTIVE_BOTS:
-            return web.json_response({"error": "No bots online"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"error": "No bots online"}, status=400)
             
         bot = ACTIVE_BOTS[0]
         t_uid = int(target_uid) if target_uid else int(bot['uid'])
@@ -522,15 +522,15 @@ async def handle_group_invite(request):
             await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', E)
         
         asyncio.create_task(delayed_leave())
-        return web.json_response({"success": True, "message": f"Group invitation ({limit}) sent to {t_uid}"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": f"Group invitation ({limit}) sent to {t_uid}"})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": str(e)}, status=500)
 
 WEB_AUTO_START_STATE = {'running': False, 'stop_auto': False, 'task': None, 'team_code': None}
 
 async def handle_auto_start(request):
     if not check_auth(request):
-        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
     try:
         data = await request.json()
         action = data.get('action')
@@ -542,16 +542,16 @@ async def handle_auto_start(request):
             if WEB_AUTO_START_STATE['task']:
                 WEB_AUTO_START_STATE['task'].cancel()
                 WEB_AUTO_START_STATE['task'] = None
-            return web.json_response({"success": True, "message": "Auto start stopped"}, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"success": True, "message": "Auto start stopped"})
             
         if not team_code:
-            return web.json_response({"error": "Team Code required"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"error": "Team Code required"}, status=400)
 
         if not ACTIVE_BOTS:
-            return web.json_response({"error": "No bots online"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"error": "No bots online"}, status=400)
             
         if WEB_AUTO_START_STATE['running']:
-            return web.json_response({"error": "Auto start already running"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"error": "Auto start already running"}, status=400)
 
         bot = ACTIVE_BOTS[0]
         WEB_AUTO_START_STATE['stop_auto'] = False
@@ -582,18 +582,18 @@ async def handle_auto_start(request):
                 WEB_AUTO_START_STATE['task'] = None
 
         WEB_AUTO_START_STATE['task'] = asyncio.create_task(web_auto_start_loop())
-        return web.json_response({"success": True, "message": f"Auto start initiated for {team_code}"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": f"Auto start initiated for {team_code}"})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": str(e)}, status=500)
 
 async def handle_bots(request):
     if not check_auth(request):
-        return web.json_response({"error": "Unauthorized Access"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
     try:
         bots = [{"uid": b['uid'], "region": b['region']} for b in ACTIVE_BOTS]
-        return web.json_response({"bots": bots}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"bots": bots})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": str(e)}, status=500)
 
 async def handle_login(request):
     try:
@@ -601,32 +601,49 @@ async def handle_login(request):
         user = data.get('username')
         pwd = data.get('password')
         if user == ADMIN_USER and pwd == ADMIN_PASS:
-            return web.json_response({"success": True, "token": ADMIN_PASS}, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"success": True, "token": ADMIN_PASS})
         else:
-            return web.json_response({"error": "Invalid Username or Password"}, status=401, headers={"Access-Control-Allow-Origin": "*"})
+            return web.json_response({"error": "Invalid Username or Password"}, status=401)
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"error": str(e)}, status=500)
 
 async def handle_options(request):
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, GET, OPTIONS, HEAD",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
     }
     return web.Response(headers=headers)
 
+@web.middleware
+async def cors_middleware(request, handler):
+    if request.method == 'OPTIONS':
+        return await handle_options(request)
+    
+    try:
+        response = await handler(request)
+        response.headers.update({
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, HEAD",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        })
+        return response
+    except web.HTTPException as ex:
+        ex.headers.update({
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS, HEAD",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        })
+        raise ex
+
 async def start_web_server():
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app.router.add_get('/', handle_ping)
     app.router.add_post('/api/emote', handle_emote)
     app.router.add_post('/api/group_invite', handle_group_invite)
     app.router.add_post('/api/auto_start', handle_auto_start)
     app.router.add_get('/api/bots', handle_bots)
     app.router.add_post('/api/login', handle_login)
-    app.router.add_options('/api/emote', handle_options)
-    app.router.add_options('/api/group_invite', handle_options)
-    app.router.add_options('/api/auto_start', handle_options)
-    app.router.add_options('/api/login', handle_options)
     
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
