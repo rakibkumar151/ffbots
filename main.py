@@ -559,8 +559,8 @@ async def handle_verify_github_pass(request):
         data = await request.json()
         input_pass = data.get('password')
         
-        # Placeholder for GitHub Raw URL - replace with actual URL
-        GITHUB_URL = "https://raw.githubusercontent.com/ShahGCreator/pass/main/pass.txt"
+        # Fetching password from the user's provided GitHub Gist
+        GITHUB_URL = "https://gist.githubusercontent.com/rakibkumar151/ded10243095bc97e4c89e31e593112f9/raw/c919f226e7eeed8592d3ad83eeea6bcdf7bca508/pass.txt"
         
         async with aiohttp.ClientSession() as session:
             async with session.get(GITHUB_URL) as response:
