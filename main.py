@@ -437,38 +437,45 @@ async def handle_emote(request):
         data = await request.json()
         team_code = data.get('team_code')
         emote_id = data.get('emote_id')
-        target_uid = data.get('target_uid')
+        target_uids = data.get('target_uids', [])
         
         if not ACTIVE_BOTS:
             return web.json_response({"error": "No bots online to send emote"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
             
-        # Pick the first active bot
         bot = ACTIVE_BOTS[0]
-        t_uid = int(target_uid) if target_uid else int(bot['uid'])
         
-        # Execute emote sequence
+        # Initial Leave to ensure clean state
         initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
         await asyncio.sleep(0.05)
 
+        # Join Squad
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
         await asyncio.sleep(0.2)
         
-        emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
+        # If no target UIDs provided, default to bot's own UID
+        uids_to_emote = target_uids if target_uids else [bot['uid']]
+        
+        for uid in uids_to_emote:
+            if not uid: continue
+            try:
+                t_uid = int(uid)
+                emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
+                # Send 4 times for maximum guarantee
+                for _ in range(4):
+                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
+                await asyncio.sleep(0.1) # Small delay between targets
+            except: pass
+            
         await asyncio.sleep(0.2)
         
+        # Final Leave
         final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        # Send leave 3 times for 100% guarantee from Website
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+        for _ in range(3):
+            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
 
-        return web.json_response({"success": True, "message": f"Emote sent via bot {bot['uid']}"}, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
