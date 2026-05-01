@@ -446,23 +446,17 @@ async def handle_emote(request):
             
         bot = ACTIVE_BOTS[0]
         
-        # Super Fast Execution Sequence
+        # Pre-generate packets
         initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
-        emote_pkt = None
         
-        # Pre-generate first emote packet if possible
-        if target_uids:
-            emote_pkt = await Emote_k(int(target_uids[0]), int(emote_id), bot['key'], bot['iv'], bot['region'])
-        else:
-            emote_pkt = await Emote_k(int(bot['uid']), int(emote_id), bot['key'], bot['iv'], bot['region'])
-
-        # 1. Clean state
+        # 1. Force Reset (Ensure we are out of any previous squad)
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
-        
+        await asyncio.sleep(0.2) # Essential delay for server to register the leave
+
         # 2. Join
         await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.15) # Minimal join delay for server sync
+        await asyncio.sleep(0.15) 
 
         # 3. Emote Spam
         uids_to_emote = target_uids if target_uids else [bot['uid']]
@@ -474,19 +468,28 @@ async def handle_emote(request):
                 t_uid = int(uid)
                 curr_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
                 for _ in range(packet_count):
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', curr_pkt)
-            except: pass
-            
-        # 4. Super Fast Leave (Millisecond Mode)
-        if auto_leave:
-            try:
-                await asyncio.sleep(0.05) # Tiny delay to sync emote with server
-                final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-                # Instant spam 15 times for 100% Leave Guarantee
-                for _ in range(15):
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave, drain=False)
+                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', curr_pkt, drain=False)
                 if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
             except: pass
+            
+        # 4. Super Fast Exit + Background Cleanup
+        if auto_leave:
+            final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+            
+            # Immediate Spam
+            for _ in range(10):
+                await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave, drain=False)
+            if bot['state']['online_writer']: await bot['state']['online_writer'].drain()
+
+            # Background "Anti-Stuck" Cleanup: Keep leaving for 2 seconds to be 100% sure
+            async def cleanup_leave():
+                for _ in range(4):
+                    await asyncio.sleep(0.5)
+                    try:
+                        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+                    except: break
+            
+            asyncio.create_task(cleanup_leave())
 
         return web.json_response({"success": True, "message": "Millisecond Mode Executed"}, headers={"Access-Control-Allow-Origin": "*"})
     except Exception as e:
