@@ -472,6 +472,104 @@ async def handle_emote(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
 
+async def handle_group_invite(request):
+    try:
+        data = await request.json()
+        limit = int(data.get('limit', 4))
+        target_uid = data.get('target_uid')
+        
+        if not ACTIVE_BOTS:
+            return web.json_response({"error": "No bots online"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+            
+        bot = ACTIVE_BOTS[0]
+        t_uid = int(target_uid) if target_uid else int(bot['uid'])
+        
+        PAc = await OpEnSq(bot['key'], bot['iv'], bot['region'])
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', PAc)
+        
+        C = await cHSq(limit, t_uid, bot['key'], bot['iv'], bot['region'])
+        await asyncio.sleep(0.3)
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', C)
+        
+        V = await SEnd_InV(limit, t_uid, bot['key'], bot['iv'], bot['region'])
+        await asyncio.sleep(0.3)
+        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', V)
+        
+        async def delayed_leave():
+            await asyncio.sleep(3.5)
+            E = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', E)
+        
+        asyncio.create_task(delayed_leave())
+        return web.json_response({"success": True, "message": f"Group invitation ({limit}) sent to {t_uid}"}, headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+
+WEB_AUTO_START_STATE = {'running': False, 'stop_auto': False, 'task': None, 'team_code': None}
+
+async def handle_auto_start(request):
+    try:
+        data = await request.json()
+        action = data.get('action')
+        team_code = data.get('team_code')
+        
+        if action == 'stop':
+            WEB_AUTO_START_STATE['stop_auto'] = True
+            WEB_AUTO_START_STATE['running'] = False
+            if WEB_AUTO_START_STATE['task']:
+                WEB_AUTO_START_STATE['task'].cancel()
+                WEB_AUTO_START_STATE['task'] = None
+            return web.json_response({"success": True, "message": "Auto start stopped"}, headers={"Access-Control-Allow-Origin": "*"})
+            
+        if not team_code:
+            return web.json_response({"error": "Team Code required"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+
+        if not ACTIVE_BOTS:
+            return web.json_response({"error": "No bots online"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+            
+        if WEB_AUTO_START_STATE['running']:
+            return web.json_response({"error": "Auto start already running"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+
+        bot = ACTIVE_BOTS[0]
+        WEB_AUTO_START_STATE['stop_auto'] = False
+        WEB_AUTO_START_STATE['running'] = True
+        WEB_AUTO_START_STATE['team_code'] = team_code
+        
+        async def web_auto_start_loop():
+            try:
+                while not WEB_AUTO_START_STATE['stop_auto']:
+                    join_pkt = await join_teamcode_packet(team_code, bot['key'], bot['iv'], bot['region'])
+                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
+                    await asyncio.sleep(2)
+                    start_pkt = await start_auto_packet(bot['key'], bot['iv'], bot['region'])
+                    end_time = time.time() + start_spam_duration
+                    while time.time() < end_time and not WEB_AUTO_START_STATE['stop_auto']:
+                        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', start_pkt)
+                        await asyncio.sleep(start_spam_delay)
+                    if WEB_AUTO_START_STATE['stop_auto']: break
+                    await asyncio.sleep(wait_after_match)
+                    if WEB_AUTO_START_STATE['stop_auto']: break
+                    leave_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', leave_pkt)
+                    await asyncio.sleep(2)
+            except Exception as e:
+                print(f"Web Auto Start Error: {e}")
+            finally:
+                WEB_AUTO_START_STATE['running'] = False
+                WEB_AUTO_START_STATE['task'] = None
+
+        WEB_AUTO_START_STATE['task'] = asyncio.create_task(web_auto_start_loop())
+        return web.json_response({"success": True, "message": f"Auto start initiated for {team_code}"}, headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+
+async def handle_bots(request):
+    try:
+        bots = [{"uid": b['uid'], "region": b['region']} for b in ACTIVE_BOTS]
+        return web.json_response({"bots": bots}, headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+
 async def handle_options(request):
     headers = {
         "Access-Control-Allow-Origin": "*",
@@ -484,7 +582,12 @@ async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle_ping)
     app.router.add_post('/api/emote', handle_emote)
+    app.router.add_post('/api/group_invite', handle_group_invite)
+    app.router.add_post('/api/auto_start', handle_auto_start)
+    app.router.add_get('/api/bots', handle_bots)
     app.router.add_options('/api/emote', handle_options)
+    app.router.add_options('/api/group_invite', handle_options)
+    app.router.add_options('/api/auto_start', handle_options)
     
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
