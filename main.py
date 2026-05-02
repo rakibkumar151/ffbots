@@ -87,11 +87,9 @@ async def self_pinger():
             await asyncio.sleep(600) # Ping every 10 minutes to stay active
 
 async def wait_for_bot(timeout=10):
-    # Professional Load Balancer: Pick a random FREE bot from the pool
+    # API Helper to wait for a bot to come online if it's currently reconnecting
     for _ in range(timeout * 2):
-        free_bots = [b for b in ACTIVE_BOTS if not b.get('busy', False)]
-        if free_bots:
-            return random.choice(free_bots)
+        if ACTIVE_BOTS: return ACTIVE_BOTS[0]
         await asyncio.sleep(0.5)
     return None
 
@@ -230,30 +228,25 @@ async def leave_squad_packet(key, iv, region):
     packet_type = '0514' if region.lower() == "ind" else "0519" if region.lower() == "bd" else "0515"
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet_type, key, iv)
 
-async def auto_start_loop(team_code, uid, chat_id, chat_type, key, iv, region, state, bot_info):
-    bot_info['busy'] = True
-    bot_state = bot_info['state']
-    try:
-        while not state['stop_auto']:
-            try:
-                join_pkt = await join_teamcode_packet(team_code, key, iv, region)
-                await SEndPacKeT(bot_state, 'OnLine', join_pkt)
-                await asyncio.sleep(2)
-                start_pkt = await start_auto_packet(key, iv, region)
-                end_time = time.time() + start_spam_duration
-                while time.time() < end_time and not state['stop_auto']:
-                    await SEndPacKeT(bot_state, 'OnLine', start_pkt)
-                    await asyncio.sleep(start_spam_delay)
-                if state['stop_auto']: break
-                await asyncio.sleep(wait_after_match)
-                if state['stop_auto']: break
-                leave_pkt = await leave_squad_packet(key, iv, region)
-                await SEndPacKeT(bot_state, 'OnLine', leave_pkt)
-                await asyncio.sleep(2)
-            except: break
-    finally:
-        bot_info['busy'] = False
-        state['running'] = False; state['stop_auto'] = False
+async def auto_start_loop(team_code, uid, chat_id, chat_type, key, iv, region, state, bot_state):
+    while not state['stop_auto']:
+        try:
+            join_pkt = await join_teamcode_packet(team_code, key, iv, region)
+            await SEndPacKeT(bot_state, 'OnLine', join_pkt)
+            await asyncio.sleep(2)
+            start_pkt = await start_auto_packet(key, iv, region)
+            end_time = time.time() + start_spam_duration
+            while time.time() < end_time and not state['stop_auto']:
+                await SEndPacKeT(bot_state, 'OnLine', start_pkt)
+                await asyncio.sleep(start_spam_delay)
+            if state['stop_auto']: break
+            await asyncio.sleep(wait_after_match)
+            if state['stop_auto']: break
+            leave_pkt = await leave_squad_packet(key, iv, region)
+            await SEndPacKeT(bot_state, 'OnLine', leave_pkt)
+            await asyncio.sleep(2)
+        except: break
+    state['running'] = False; state['stop_auto'] = False
 
 async def safe_send_message(chat_type, message, target_uid, chat_id, key, iv, region, bot_state, max_retries=3):
     for _ in range(max_retries):
@@ -277,9 +270,8 @@ async def TcPOnLine(ip, port, auth_token, bot_state, reconnect_delay=0.5):
             if bot_state['online_writer']: bot_state['online_writer'].close(); await bot_state['online_writer'].wait_closed(); bot_state['online_writer'] = None
         await asyncio.sleep(reconnect_delay)
 
-async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, reconnect_delay=0.5):
+async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state, reconnect_delay=0.5):
     auto_start_state = {'running': False, 'stop_auto': False, 'task': None}
-    bot_state = bot_info['state']
     
     while True:
         try:
@@ -302,7 +294,6 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, 
                                 continue
                             
                             try:
-                                bot_info['busy'] = True
                                 team_code = parts[1]
                                 last_part = parts[-1].lower()
                                 emote_id = (NUMBER_EMOTES.get(last_part) or NAME_EMOTES.get(last_part))
@@ -338,8 +329,6 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, 
                                 await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Done! Joined {team_code} and sent emote.", uid, chat_id, key, iv, region, bot_state)
                             except:
                                 await safe_send_message(proto.Data.chat_type, "[B][C][FF0000]❌ Execution Error!", uid, chat_id, key, iv, region, bot_state)
-                            finally:
-                                bot_info['busy'] = False
 
                         elif inPuTMsG.startswith('/e'):
                             parts = inPuTMsG.strip().split()
@@ -349,7 +338,6 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, 
                                 continue
                             
                             try:
-                                bot_info['busy'] = True
                                 last_part = parts[-1].lower()
                                 is_direct = last_part.isdigit() and len(last_part) == 9 and last_part.startswith("9090")
                                 emote_id = int(last_part) if is_direct else (NUMBER_EMOTES.get(last_part) or NAME_EMOTES.get(last_part))
@@ -366,8 +354,6 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, 
                                 await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Emote Sent!", uid, chat_id, key, iv, region, bot_state)
                             except:
                                 await safe_send_message(proto.Data.chat_type, "[B][C][FF0000]❌ Format Error!", uid, chat_id, key, iv, region, bot_state)
-                            finally:
-                                bot_info['busy'] = False
 
                         elif inPuTMsG in ('/3', '/4', '/5', '/6'):
                             limit = int(inPuTMsG[1:])
@@ -375,7 +361,6 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, 
                             await safe_send_message(proto.Data.chat_type, initial_message, uid, chat_id, key, iv, region, bot_state)
                             
                             try:
-                                bot_info['busy'] = True
                                 PAc = await OpEnSq(key, iv, region)
                                 await SEndPacKeT(bot_state, 'OnLine', PAc)
                                 
@@ -395,15 +380,13 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_info, 
                                 await safe_send_message(proto.Data.chat_type, success_message, uid, chat_id, key, iv, region, bot_state)
                             except Exception as e:
                                 await safe_send_message(proto.Data.chat_type, f"[B][C][FF0000]❌ ERROR: {str(e)}", uid, chat_id, key, iv, region, bot_state)
-                            finally:
-                                bot_info['busy'] = False
 
                         elif inPuTMsG.startswith('/lw '):
                             team_code = inPuTMsG.split()[1]
                             if auto_start_state['running']: continue
                             auto_start_state['stop_auto'] = False; auto_start_state['running'] = True
                             await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]Auto started for {team_code}", uid, chat_id, key, iv, region, bot_state)
-                            auto_start_state['task'] = asyncio.create_task(auto_start_loop(team_code, uid, chat_id, proto.Data.chat_type, key, iv, region, auto_start_state, bot_info))
+                            auto_start_state['task'] = asyncio.create_task(auto_start_loop(team_code, uid, chat_id, proto.Data.chat_type, key, iv, region, auto_start_state, bot_state))
                         elif inPuTMsG == '/stop_auto':
                             auto_start_state['stop_auto'] = True; auto_start_state['running'] = False
                             if auto_start_state['task']: auto_start_state['task'].cancel()
@@ -465,12 +448,12 @@ async def run_bot_instance(uid, password):
             
             ready = asyncio.Event()
             bot_state = {'online_writer': None, 'whisper_writer': None}
-            bot_info = {'uid': uid, 'key': auth.key, 'iv': auth.iv, 'region': getattr(auth, 'region', 'IND'), 'state': bot_state, 'busy': False}
+            bot_info = {'uid': uid, 'key': auth.key, 'iv': auth.iv, 'region': getattr(auth, 'region', 'IND'), 'state': bot_state}
             ACTIVE_BOTS.append(bot_info)
             print(f"✅ Bot {uid} is now Online!")
             
             tasks = [
-                asyncio.create_task(TcPChaT(chat_ip, chat_port, auth_token, auth.key, auth.iv, ready, getattr(auth, 'region', 'IND'), bot_info)),
+                asyncio.create_task(TcPChaT(chat_ip, chat_port, auth_token, auth.key, auth.iv, ready, getattr(auth, 'region', 'IND'), bot_state)),
                 asyncio.create_task(TcPOnLine(online_ip, online_port, auth_token, bot_state))
             ]
             
@@ -502,43 +485,39 @@ async def handle_emote(request):
         bot = await wait_for_bot()
         if not bot:
             return web.json_response({"error": "No bots online (Check connection)"}, status=400)
+            
+        # Initial Leave to ensure clean state
+        initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        await SEndPacKeT(bot['state'], 'OnLine', initial_leave)
+        await asyncio.sleep(0.05)
+
+        # Join Squad
+        join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
+        await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
+        await asyncio.sleep(0.2)
         
-        bot['busy'] = True
-        try:
-            # Initial Leave to ensure clean state
-            initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-            await SEndPacKeT(bot['state'], 'OnLine', initial_leave)
-            await asyncio.sleep(0.05)
+        # If no target UIDs provided, default to bot's own UID
+        uids_to_emote = target_uids if target_uids else [bot['uid']]
+        
+        for uid in uids_to_emote:
+            if not uid: continue
+            try:
+                t_uid = int(uid)
+                emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
+                # Send 4 times for maximum guarantee
+                for _ in range(4):
+                    await SEndPacKeT(bot['state'], 'OnLine', emote_pkt)
+                await asyncio.sleep(0.1) # Small delay between targets
+            except: pass
+            
+        await asyncio.sleep(0.2)
+        
+        # Final Leave
+        final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+        for _ in range(3):
+            await SEndPacKeT(bot['state'], 'OnLine', final_leave)
 
-            # Join Squad
-            join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
-            await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
-            await asyncio.sleep(0.2)
-            
-            # If no target UIDs provided, default to bot's own UID
-            uids_to_emote = target_uids if target_uids else [bot['uid']]
-            
-            for uid in uids_to_emote:
-                if not uid: continue
-                try:
-                    t_uid = int(uid)
-                    emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
-                    # Send 4 times for maximum guarantee
-                    for _ in range(4):
-                        await SEndPacKeT(bot['state'], 'OnLine', emote_pkt)
-                    await asyncio.sleep(0.1) # Small delay between targets
-                except: pass
-                
-            await asyncio.sleep(0.2)
-            
-            # Final Leave
-            final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-            for _ in range(3):
-                await SEndPacKeT(bot['state'], 'OnLine', final_leave)
-
-            return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"})
-        finally:
-            bot['busy'] = False
+        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -554,34 +533,26 @@ async def handle_group_invite(request):
         if not bot:
             return web.json_response({"error": "No bots online (Check connection)"}, status=400)
             
-        bot['busy'] = True
-        try:
-            t_uid = int(target_uid) if target_uid else int(bot['uid'])
-            
-            PAc = await OpEnSq(bot['key'], bot['iv'], bot['region'])
-            await SEndPacKeT(bot['state'], 'OnLine', PAc)
-            
-            C = await cHSq(limit, t_uid, bot['key'], bot['iv'], bot['region'])
-            await asyncio.sleep(0.3)
-            await SEndPacKeT(bot['state'], 'OnLine', C)
-            
-            V = await SEnd_InV(limit, t_uid, bot['key'], bot['iv'], bot['region'])
-            await asyncio.sleep(0.3)
-            await SEndPacKeT(bot['state'], 'OnLine', V)
-            
-            async def delayed_leave():
-                try:
-                    await asyncio.sleep(3.5)
-                    E = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-                    await SEndPacKeT(bot['state'], 'OnLine', E)
-                finally:
-                    bot['busy'] = False
-            
-            asyncio.create_task(delayed_leave())
-            return web.json_response({"success": True, "message": f"Group invitation ({limit}) sent to {t_uid}"})
-        except Exception as e:
-            bot['busy'] = False
-            raise e
+        t_uid = int(target_uid) if target_uid else int(bot['uid'])
+        
+        PAc = await OpEnSq(bot['key'], bot['iv'], bot['region'])
+        await SEndPacKeT(bot['state'], 'OnLine', PAc)
+        
+        C = await cHSq(limit, t_uid, bot['key'], bot['iv'], bot['region'])
+        await asyncio.sleep(0.3)
+        await SEndPacKeT(bot['state'], 'OnLine', C)
+        
+        V = await SEnd_InV(limit, t_uid, bot['key'], bot['iv'], bot['region'])
+        await asyncio.sleep(0.3)
+        await SEndPacKeT(bot['state'], 'OnLine', V)
+        
+        async def delayed_leave():
+            await asyncio.sleep(3.5)
+            E = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
+            await SEndPacKeT(bot['state'], 'OnLine', E)
+        
+        asyncio.create_task(delayed_leave())
+        return web.json_response({"success": True, "message": f"Group invitation ({limit}) sent to {t_uid}"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -669,9 +640,15 @@ async def handle_auto_start(request):
         WEB_AUTO_START_STATE['games_played'] = 0
         
         async def web_auto_start_loop():
-            bot['busy'] = True
             try:
                 while not WEB_AUTO_START_STATE['stop_auto']:
+                    if not ACTIVE_BOTS:
+                        print("Auto Start: No bots available, stopping...")
+                        break
+                    
+                    # Always use the first available bot
+                    bot = ACTIVE_BOTS[0]
+                    
                     # Step 1: Join Team Code
                     join_pkt = await join_teamcode_packet(team_code, bot['key'], bot['iv'], bot['region'])
                     await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
@@ -704,7 +681,6 @@ async def handle_auto_start(request):
             except Exception as e:
                 print(f"Web Auto Start Critical Error: {e}")
             finally:
-                bot['busy'] = False
                 WEB_AUTO_START_STATE['running'] = False
                 WEB_AUTO_START_STATE['task'] = None
                 WEB_AUTO_START_STATE['start_time'] = None
