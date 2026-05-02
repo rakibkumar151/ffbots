@@ -237,7 +237,7 @@ async def AuthClan(CLan_Uid, AuTh, K, V):
     fields = {1: 3, 2: {1: int(CLan_Uid), 2: 1, 4: str(AuTh)}}
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), '1201', K, V)
 
-async def GenJoinSquadsPacket(code, K, V):
+async def GenJoinSquadsPacket(code, K, V, region="IND"):
     fields = {
         1: 4,
         2: {
@@ -248,7 +248,8 @@ async def GenJoinSquadsPacket(code, K, V):
             9: {2: 800, 6: 11, 8: "1.111.1", 9: 5, 10: 1}
         }
     }
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), '0515', K, V)
+    packet_type = '0514' if region.lower() == "ind" else "0519" if region.lower() == "bd" else "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet_type, K, V)
 
 async def OpEnSq(K, V, region):
     fields = {1: 1, 2: {2: "\u0001", 3: 1, 4: 1, 5: "en", 9: 1, 11: 1, 13: 1, 14: {2: 5756, 6: 11, 8: "1.111.5", 9: 2, 10: 4}}}

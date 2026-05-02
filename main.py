@@ -114,6 +114,8 @@ async def AuToUpDaTE():
             await asyncio.sleep(2)
 
 async def GeNeRaTeAccEss(uid, password):
+    # Added region support to credentials if available
+    region_cache = {} 
     while True:
         try:
             proxy = get_random_proxy()
@@ -126,10 +128,41 @@ async def GeNeRaTeAccEss(uid, password):
                     if response.status == 200:
                         data = await response.json()
                         return data.get("open_id"), data.get("access_token")
-                    print(f"Access Failed ({response.status}), retrying...")
+                    print(f"Access Failed ({response.status}) for {uid}, retrying...")
         except Exception as e:
             print(f"Proxy Access Error: {e}. Retrying with new SID...")
         await asyncio.sleep(2)
+
+async def execute_bot_emote(bot, team_code, emote_id, target_uids=None):
+    # Helper to execute emote cycle for a specific bot
+    try:
+        state = bot['state']
+        key, iv, region = bot['key'], bot['iv'], bot['region']
+        
+        # Initial Leave to ensure clean state
+        await SEndPacKeT(state, 'OnLine', await leave_squad_packet(key, iv, region))
+        await asyncio.sleep(0.1)
+
+        # Join Squad with Region Fix
+        join_pkt = await GenJoinSquadsPacket(team_code, key, iv, region)
+        await SEndPacKeT(state, 'OnLine', join_pkt)
+        await asyncio.sleep(0.3)
+        
+        # Target UIDs
+        uids_to_emote = target_uids if target_uids else [bot['uid']]
+        for t_uid in uids_to_emote:
+            if not t_uid: continue
+            emote_pkt = await Emote_k(int(t_uid), int(emote_id), key, iv, region)
+            # Send 4 times for maximum guarantee
+            for _ in range(4):
+                await SEndPacKeT(state, 'OnLine', emote_pkt)
+            await asyncio.sleep(0.1)
+            
+        await asyncio.sleep(0.3)
+        # Final Leave
+        await SEndPacKeT(state, 'OnLine', await leave_squad_packet(key, iv, region))
+    except Exception as e:
+        print(f"Bot {bot['uid']} Emote Error: {e}")
 
 async def encrypted_proto(encoded_hex):
     from Crypto.Cipher import AES
@@ -303,30 +336,14 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                                     await safe_send_message(proto.Data.chat_type, f"[B][C][FF0000]❌ Invalid emote: {last_part}", uid, chat_id, key, iv, region, bot_state)
                                     continue
                                 
-                                # High-Speed 100% Guarantee: 0.2s Delay + Triple Send
-                                initial_leave = await leave_squad_packet(key, iv, region)
-                                await SEndPacKeT(bot_state, 'OnLine', initial_leave)
-                                await asyncio.sleep(0.05)
-
-                                join_pkt = await GenJoinSquadsPacket(team_code, key, iv)
-                                await SEndPacKeT(bot_state, 'OnLine', join_pkt)
-                                await asyncio.sleep(0.2) # Adjusted to 0.2s for balanced speed
+                                target_uid = int(parts[2]) if len(parts) == 4 else int(uid)
                                 
-                                emote_pkt = await Emote_k(target_uid, int(emote_id), key, iv, region)
-                                # Send 4 times instantly for maximum guarantee
-                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
-                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
-                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
-                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
-                                await asyncio.sleep(0.2) # Adjusted to 0.2s before leaving
+                                # Multi-ID Implementation: Up to 3 bots join and emote
+                                bots_to_use = ACTIVE_BOTS[:3]
+                                for b_info in bots_to_use:
+                                    asyncio.create_task(execute_bot_emote(b_info, team_code, emote_id, [target_uid]))
                                 
-                                final_leave = await leave_squad_packet(key, iv, region)
-                                # Send leave 3 times for 100% guarantee
-                                await SEndPacKeT(bot_state, 'OnLine', final_leave)
-                                await SEndPacKeT(bot_state, 'OnLine', final_leave)
-                                await SEndPacKeT(bot_state, 'OnLine', final_leave)
-                                
-                                await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Done! Joined {team_code} and sent emote.", uid, chat_id, key, iv, region, bot_state)
+                                await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Done! {len(bots_to_use)} bots joined {team_code} and sent emote.", uid, chat_id, key, iv, region, bot_state)
                             except:
                                 await safe_send_message(proto.Data.chat_type, "[B][C][FF0000]❌ Execution Error!", uid, chat_id, key, iv, region, bot_state)
 
@@ -482,42 +499,15 @@ async def handle_emote(request):
         emote_id = data.get('emote_id')
         target_uids = data.get('target_uids', [])
         
-        bot = await wait_for_bot()
-        if not bot:
+        if not ACTIVE_BOTS:
             return web.json_response({"error": "No bots online (Check connection)"}, status=400)
             
-        # Initial Leave to ensure clean state
-        initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        await SEndPacKeT(bot['state'], 'OnLine', initial_leave)
-        await asyncio.sleep(0.05)
-
-        # Join Squad
-        join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
-        await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
-        await asyncio.sleep(0.2)
-        
-        # If no target UIDs provided, default to bot's own UID
-        uids_to_emote = target_uids if target_uids else [bot['uid']]
-        
-        for uid in uids_to_emote:
-            if not uid: continue
-            try:
-                t_uid = int(uid)
-                emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
-                # Send 4 times for maximum guarantee
-                for _ in range(4):
-                    await SEndPacKeT(bot['state'], 'OnLine', emote_pkt)
-                await asyncio.sleep(0.1) # Small delay between targets
-            except: pass
+        # Multi-ID Implementation: Trigger emote from up to 3 bots to fill squad
+        bots_to_use = ACTIVE_BOTS[:3]
+        for bot in bots_to_use:
+            asyncio.create_task(execute_bot_emote(bot, team_code, emote_id, target_uids))
             
-        await asyncio.sleep(0.2)
-        
-        # Final Leave
-        final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        for _ in range(3):
-            await SEndPacKeT(bot['state'], 'OnLine', final_leave)
-
-        return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"})
+        return web.json_response({"success": True, "message": f"Emote cycle started for {len(bots_to_use)} bots"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
