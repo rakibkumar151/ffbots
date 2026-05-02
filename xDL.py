@@ -296,6 +296,6 @@ async def AutH_Chat(T, uid, code, K, V):
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), '0515', K, V)
 
 async def Emote_k(TarGeT, idT, K, V, region):
-    fields = {1: 21, 2: {1: 804266360, 2: 909000001, 5: {1: TarGeT, 3: idT}}}
+    fields = {1: 21, 2: {1: 0, 2: 909000001, 5: {1: int(TarGeT), 3: int(idT)}}}
     packet_type = '0514' if region.lower() == "ind" else "0519" if region.lower() == "bd" else "0515"
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet_type, K, V)

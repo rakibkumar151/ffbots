@@ -153,12 +153,12 @@ async def execute_bot_emote(bot, team_code, emote_id, target_uids=None):
         for t_uid in uids_to_emote:
             if not t_uid: continue
             emote_pkt = await Emote_k(int(t_uid), int(emote_id), key, iv, region)
-            # Send 4 times for maximum guarantee
-            for _ in range(4):
+            # Send 5 times for maximum guarantee
+            for _ in range(5):
                 await SEndPacKeT(state, 'OnLine', emote_pkt)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
             
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(2.5) # Increased wait to ensure emote is visible in GC
         # Final Leave
         await SEndPacKeT(state, 'OnLine', await leave_squad_packet(key, iv, region))
     except Exception as e:
