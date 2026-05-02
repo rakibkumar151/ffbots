@@ -1,7 +1,6 @@
 requests
 google-play-scraper
 aiohttp
-aiodns
 protobuf
 protobuf-decoder
 pycryptodome
