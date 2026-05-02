@@ -48,13 +48,20 @@ def get_random_proxy():
     proxy_host = "change4.owlproxy.com"
     proxy_port = "7778"
     proxy_pass = "2933445"
+    # Regenerate a fresh 8-digit SID to bypass blocks
     random_sid = random.randint(10000000, 99999999)
     proxy_user = f"hr6ckDl06980_custom_zone_BR_st__city_sid_{random_sid}_time_5"
     return f"http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
 
 def get_connector():
-    # Simplified connector to allow OS to handle DNS resolution naturally
-    return aiohttp.TCPConnector(ssl=False)
+    # Improved connector with custom DNS resolver (1.1.1.1) to fix [getaddrinfo failed]
+    try:
+        from aiohttp.resolver import AsyncResolver
+        resolver = AsyncResolver(nameservers=["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"])
+        return aiohttp.TCPConnector(resolver=resolver, ssl=False, family=socket.AF_INET)
+    except:
+        # Fallback if AsyncResolver fails
+        return aiohttp.TCPConnector(ssl=False)
 
 # --- GLOBAL CONFIG ---
 LEVEL_UP = "NIKI BOT"
@@ -63,9 +70,28 @@ wait_after_match = 5
 start_spam_delay = 0.1
 region = 'IN'
 ACTIVE_BOTS = []
-# Load credentials from environment variables for production (e.g., Vercel/Render)
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "NIKI-BOT-2026")
+
+async def self_pinger():
+    # Attempt to keep the Render instance awake by pinging itself
+    # Use the provided URL as fallback
+    url = os.environ.get("RENDER_EXTERNAL_URL", "https://ffbots-1.onrender.com/")
+    await asyncio.sleep(30) # Initial wait for server to start
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(url, timeout=10) as resp:
+                    pass
+            except: pass
+            await asyncio.sleep(600) # Ping every 10 minutes to stay active
+
+async def wait_for_bot(timeout=10):
+    # API Helper to wait for a bot to come online if it's currently reconnecting
+    for _ in range(timeout * 2):
+        if ACTIVE_BOTS: return ACTIVE_BOTS[0]
+        await asyncio.sleep(0.5)
+    return None
 
 def check_auth(request):
     auth_header = request.headers.get('Authorization')
@@ -102,7 +128,7 @@ async def GeNeRaTeAccEss(uid, password):
                         return data.get("open_id"), data.get("access_token")
                     print(f"Access Failed ({response.status}), retrying...")
         except Exception as e:
-            print(f"Retrying Access via Proxy... {e}")
+            print(f"Proxy Access Error: {e}. Retrying with new SID...")
         await asyncio.sleep(2)
 
 async def encrypted_proto(encoded_hex):
@@ -166,13 +192,18 @@ async def GetLoginData(base_url, payload, token, Hr):
             print(f"Retrying GetLoginData via Proxy... {e}")
         await asyncio.sleep(2)
 
-async def SEndPacKeT(ChaT, OnLinE, TypE, PacKeT):
-    if TypE == 'ChaT':
-        if not ChaT: raise Exception("Chat server disconnected")
-        ChaT.write(PacKeT); await ChaT.drain()
-    elif TypE == 'OnLine':
-        if not OnLinE: raise Exception("Online server disconnected")
-        OnLinE.write(PacKeT); await OnLinE.drain()
+async def SEndPacKeT(bot_state, TypE, PacKeT):
+    # Wait for connection if it's temporarily down
+    for _ in range(20): # 4 seconds total wait
+        writer = bot_state.get('whisper_writer' if TypE == 'ChaT' else 'online_writer')
+        if writer:
+            try:
+                writer.write(PacKeT)
+                await writer.drain()
+                return
+            except: pass # Connection might be closed, wait for reconnect
+        await asyncio.sleep(0.2)
+    raise Exception(f"❌ Error: {TypE} server disconnected")
 
 async def xAuThSTarTuP(TarGeT, token, timestamp, key, iv):
     uid_hex = hex(TarGeT)[2:]; uid_length = len(uid_hex); encrypted_timestamp = await DecodE_HeX(timestamp)
@@ -201,18 +232,18 @@ async def auto_start_loop(team_code, uid, chat_id, chat_type, key, iv, region, s
     while not state['stop_auto']:
         try:
             join_pkt = await join_teamcode_packet(team_code, key, iv, region)
-            await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', join_pkt)
+            await SEndPacKeT(bot_state, 'OnLine', join_pkt)
             await asyncio.sleep(2)
             start_pkt = await start_auto_packet(key, iv, region)
             end_time = time.time() + start_spam_duration
             while time.time() < end_time and not state['stop_auto']:
-                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', start_pkt)
+                await SEndPacKeT(bot_state, 'OnLine', start_pkt)
                 await asyncio.sleep(start_spam_delay)
             if state['stop_auto']: break
             await asyncio.sleep(wait_after_match)
             if state['stop_auto']: break
             leave_pkt = await leave_squad_packet(key, iv, region)
-            await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', leave_pkt)
+            await SEndPacKeT(bot_state, 'OnLine', leave_pkt)
             await asyncio.sleep(2)
         except: break
     state['running'] = False; state['stop_auto'] = False
@@ -221,7 +252,7 @@ async def safe_send_message(chat_type, message, target_uid, chat_id, key, iv, re
     for _ in range(max_retries):
         try:
             P = await SEndMsG(chat_type, message, target_uid, chat_id, key, iv, region)
-            await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'ChaT', P)
+            await SEndPacKeT(bot_state, 'ChaT', P)
             return True
         except: await asyncio.sleep(0.5)
     return False
@@ -274,26 +305,26 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                                 
                                 # High-Speed 100% Guarantee: 0.2s Delay + Triple Send
                                 initial_leave = await leave_squad_packet(key, iv, region)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', initial_leave)
+                                await SEndPacKeT(bot_state, 'OnLine', initial_leave)
                                 await asyncio.sleep(0.05)
 
                                 join_pkt = await GenJoinSquadsPacket(team_code, key, iv)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', join_pkt)
+                                await SEndPacKeT(bot_state, 'OnLine', join_pkt)
                                 await asyncio.sleep(0.2) # Adjusted to 0.2s for balanced speed
                                 
                                 emote_pkt = await Emote_k(target_uid, int(emote_id), key, iv, region)
                                 # Send 4 times instantly for maximum guarantee
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', emote_pkt)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', emote_pkt)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', emote_pkt)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', emote_pkt)
+                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
+                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
+                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
+                                await SEndPacKeT(bot_state, 'OnLine', emote_pkt)
                                 await asyncio.sleep(0.2) # Adjusted to 0.2s before leaving
                                 
                                 final_leave = await leave_squad_packet(key, iv, region)
                                 # Send leave 3 times for 100% guarantee
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', final_leave)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', final_leave)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', final_leave)
+                                await SEndPacKeT(bot_state, 'OnLine', final_leave)
+                                await SEndPacKeT(bot_state, 'OnLine', final_leave)
+                                await SEndPacKeT(bot_state, 'OnLine', final_leave)
                                 
                                 await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Done! Joined {team_code} and sent emote.", uid, chat_id, key, iv, region, bot_state)
                             except:
@@ -318,7 +349,7 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                                 target_uids = [int(parts[1])] if len(parts) == 3 else [int(uid)]
                                 for t_uid in target_uids:
                                     pkt = await Emote_k(t_uid, int(emote_id), key, iv, region)
-                                    await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', pkt)
+                                    await SEndPacKeT(bot_state, 'OnLine', pkt)
                                     await asyncio.sleep(0.1)
                                 await safe_send_message(proto.Data.chat_type, f"[B][C][00FF00]✅ Emote Sent!", uid, chat_id, key, iv, region, bot_state)
                             except:
@@ -331,19 +362,19 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                             
                             try:
                                 PAc = await OpEnSq(key, iv, region)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', PAc)
+                                await SEndPacKeT(bot_state, 'OnLine', PAc)
                                 
                                 C = await cHSq(limit, uid, key, iv, region)
                                 await asyncio.sleep(0.3)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', C)
+                                await SEndPacKeT(bot_state, 'OnLine', C)
                                 
                                 V = await SEnd_InV(limit, uid, key, iv, region)
                                 await asyncio.sleep(0.3)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', V)
+                                await SEndPacKeT(bot_state, 'OnLine', V)
                                 
                                 E = await leave_squad_packet(key, iv, region)
                                 await asyncio.sleep(3.5)
-                                await SEndPacKeT(bot_state['whisper_writer'], bot_state['online_writer'], 'OnLine', E)
+                                await SEndPacKeT(bot_state, 'OnLine', E)
                                 
                                 success_message = f"[B][C][00FF00]✅ SUCCESS! {limit}-Player Group invitation sent successfully to {uid}!\n"
                                 await safe_send_message(proto.Data.chat_type, success_message, uid, chat_id, key, iv, region, bot_state)
@@ -381,9 +412,9 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                             )
                             await safe_send_message(proto.Data.chat_type, help_msg, uid, chat_id, key, iv, region, bot_state)
                     except: pass
-            bot_state['whisper_writer'].close(); await bot_state['whisper_writer'].wait_closed(); whisper_writer = None
+            bot_state['whisper_writer'].close(); await bot_state['whisper_writer'].wait_closed(); bot_state['whisper_writer'] = None
         except:
-            if bot_state['whisper_writer']: bot_state['whisper_writer'].close(); await bot_state['whisper_writer'].wait_closed(); whisper_writer = None
+            if bot_state['whisper_writer']: bot_state['whisper_writer'].close(); await bot_state['whisper_writer'].wait_closed(); bot_state['whisper_writer'] = None
         await asyncio.sleep(reconnect_delay)
 
 async def run_bot_instance(uid, password):
@@ -451,19 +482,18 @@ async def handle_emote(request):
         emote_id = data.get('emote_id')
         target_uids = data.get('target_uids', [])
         
-        if not ACTIVE_BOTS:
-            return web.json_response({"error": "No bots online to send emote"}, status=400, headers={"Access-Control-Allow-Origin": "*"})
+        bot = await wait_for_bot()
+        if not bot:
+            return web.json_response({"error": "No bots online (Check connection)"}, status=400)
             
-        bot = ACTIVE_BOTS[0]
-        
         # Initial Leave to ensure clean state
         initial_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', initial_leave)
+        await SEndPacKeT(bot['state'], 'OnLine', initial_leave)
         await asyncio.sleep(0.05)
 
         # Join Squad
         join_pkt = await GenJoinSquadsPacket(team_code, bot['key'], bot['iv'])
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
+        await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
         await asyncio.sleep(0.2)
         
         # If no target UIDs provided, default to bot's own UID
@@ -476,7 +506,7 @@ async def handle_emote(request):
                 emote_pkt = await Emote_k(t_uid, int(emote_id), bot['key'], bot['iv'], bot['region'])
                 # Send 4 times for maximum guarantee
                 for _ in range(4):
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', emote_pkt)
+                    await SEndPacKeT(bot['state'], 'OnLine', emote_pkt)
                 await asyncio.sleep(0.1) # Small delay between targets
             except: pass
             
@@ -485,7 +515,7 @@ async def handle_emote(request):
         # Final Leave
         final_leave = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
         for _ in range(3):
-            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', final_leave)
+            await SEndPacKeT(bot['state'], 'OnLine', final_leave)
 
         return web.json_response({"success": True, "message": f"Emote sent to {len(uids_to_emote)} targets"})
     except Exception as e:
@@ -499,27 +529,27 @@ async def handle_group_invite(request):
         limit = int(data.get('limit', 4))
         target_uid = data.get('target_uid')
         
-        if not ACTIVE_BOTS:
-            return web.json_response({"error": "No bots online"}, status=400)
+        bot = await wait_for_bot()
+        if not bot:
+            return web.json_response({"error": "No bots online (Check connection)"}, status=400)
             
-        bot = ACTIVE_BOTS[0]
         t_uid = int(target_uid) if target_uid else int(bot['uid'])
         
         PAc = await OpEnSq(bot['key'], bot['iv'], bot['region'])
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', PAc)
+        await SEndPacKeT(bot['state'], 'OnLine', PAc)
         
         C = await cHSq(limit, t_uid, bot['key'], bot['iv'], bot['region'])
         await asyncio.sleep(0.3)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', C)
+        await SEndPacKeT(bot['state'], 'OnLine', C)
         
         V = await SEnd_InV(limit, t_uid, bot['key'], bot['iv'], bot['region'])
         await asyncio.sleep(0.3)
-        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', V)
+        await SEndPacKeT(bot['state'], 'OnLine', V)
         
         async def delayed_leave():
             await asyncio.sleep(3.5)
             E = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-            await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', E)
+            await SEndPacKeT(bot['state'], 'OnLine', E)
         
         asyncio.create_task(delayed_leave())
         return web.json_response({"success": True, "message": f"Group invitation ({limit}) sent to {t_uid}"})
@@ -595,13 +625,13 @@ async def handle_auto_start(request):
         if not team_code:
             return web.json_response({"error": "Team Code required"}, status=400)
 
-        if not ACTIVE_BOTS:
-            return web.json_response({"error": "No bots online"}, status=400)
+        bot = await wait_for_bot()
+        if not bot:
+            return web.json_response({"error": "No bots online (Check connection)"}, status=400)
             
         if WEB_AUTO_START_STATE['running']:
             return web.json_response({"error": "Auto start already running"}, status=400)
 
-        bot = ACTIVE_BOTS[0]
         WEB_AUTO_START_STATE['stop_auto'] = False
         WEB_AUTO_START_STATE['running'] = True
         WEB_AUTO_START_STATE['team_code'] = team_code
@@ -621,7 +651,7 @@ async def handle_auto_start(request):
                     
                     # Step 1: Join Team Code
                     join_pkt = await join_teamcode_packet(team_code, bot['key'], bot['iv'], bot['region'])
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', join_pkt)
+                    await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
                     await asyncio.sleep(2.5)
                     
                     if WEB_AUTO_START_STATE['stop_auto']: break
@@ -631,7 +661,7 @@ async def handle_auto_start(request):
                     # Spam for about 10 seconds to ensure start
                     for i in range(40): 
                         if WEB_AUTO_START_STATE['stop_auto']: break
-                        await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', start_pkt)
+                        await SEndPacKeT(bot['state'], 'OnLine', start_pkt)
                         await asyncio.sleep(0.25)
                     
                     if WEB_AUTO_START_STATE['stop_auto']: break
@@ -645,7 +675,7 @@ async def handle_auto_start(request):
                     
                     # Step 4: Leave Squad so we can join the next one
                     leave_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-                    await SEndPacKeT(bot['state']['whisper_writer'], bot['state']['online_writer'], 'OnLine', leave_pkt)
+                    await SEndPacKeT(bot['state'], 'OnLine', leave_pkt)
                     await asyncio.sleep(2.5)
                     
             except Exception as e:
@@ -730,6 +760,7 @@ async def start_web_server():
 
 async def MaiiiinE():
     asyncio.create_task(start_web_server())
+    asyncio.create_task(self_pinger())
     while True:
         try:
             os.system('cls' if os.name == 'nt' else 'clear')
