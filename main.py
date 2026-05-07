@@ -105,7 +105,7 @@ async def get_free_bot(task_id=None, timeout=15, reject_if_busy=False):
         import random
         random.shuffle(bots)
         for bot in bots:
-            if not bot.get('is_busy', False) and not bot.get('is_level_up', False) and bot.get('state', {}).get('online_writer') is not None:
+            if not bot.get('is_busy', False) and not bot.get('is_leveling_up', False) and bot.get('state', {}).get('online_writer') is not None:
                 bot['is_busy'] = True
                 if task_id:
                     bot['current_task_id'] = task_id
@@ -642,6 +642,7 @@ async def run_bot_instance(uid, password):
 from aiohttp import web
 
 ACTIVE_GC_SESSIONS = {}
+LEVEL_UP_STATES = {}
 
 async def monitor_gc_session(team_code):
     while True:
@@ -790,30 +791,40 @@ async def handle_group_invite(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
-LEVEL_UP_TASKS = {}
-
 async def handle_match_bot_stats(request):
     if not check_auth(request):
         return web.json_response({"error": "Unauthorized Access"}, status=401)
     
     bot_uid = request.query.get('bot_uid')
     if not bot_uid:
-        return web.json_response({"running": False, "error": "bot_uid required"})
+        return web.json_response({
+            "running": False,
+            "games_played": 0,
+            "runtime": 0,
+            "bot_uid": None,
+            "team_code": None
+        })
         
-    task_info = LEVEL_UP_TASKS.get(bot_uid)
-    if not task_info:
-        return web.json_response({"running": False})
+    state = LEVEL_UP_STATES.get(bot_uid)
+    if not state:
+        return web.json_response({
+            "running": False,
+            "games_played": 0,
+            "runtime": 0,
+            "bot_uid": bot_uid,
+            "team_code": None
+        })
         
     runtime = 0
-    if task_info['running'] and task_info['start_time']:
-        runtime = int(time.time() - task_info['start_time'])
+    if state['running'] and state['start_time']:
+        runtime = int(time.time() - state['start_time'])
         
     return web.json_response({
-        "running": task_info['running'],
-        "games_played": task_info['games_played'],
+        "running": state['running'],
+        "games_played": state['games_played'],
         "runtime": runtime,
-        "bot_uid": task_info['bot_uid'],
-        "team_code": task_info['team_code']
+        "bot_uid": bot_uid,
+        "team_code": state['team_code']
     })
 
 async def handle_verify_github_pass(request):
@@ -835,7 +846,6 @@ async def handle_verify_github_pass(request):
                     else:
                         return web.json_response({"error": "Invalid Level-Up Password"}, status=401)
                 else:
-                    # Fallback if github is down or URL wrong
                     return web.json_response({"error": "Auth Server Down"}, status=500)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -852,94 +862,82 @@ async def handle_auto_start(request):
         if not bot_uid:
             return web.json_response({"error": "Bot UID required"}, status=400)
             
+        bot = next((b for b in ACTIVE_BOTS if b['uid'] == bot_uid), None)
+            
         if action == 'stop':
-            task_info = LEVEL_UP_TASKS.get(bot_uid)
-            if task_info:
-                task_info['stop_auto'] = True
-                task_info['running'] = False
-                if task_info['task']:
-                    task_info['task'].cancel()
-                    
-            for b in ACTIVE_BOTS:
-                if str(b['uid']) == str(bot_uid):
-                    b['is_level_up'] = False
-                    b['is_busy'] = False
-                    break
-                    
-            if bot_uid in LEVEL_UP_TASKS:
-                del LEVEL_UP_TASKS[bot_uid]
-                
+            state = LEVEL_UP_STATES.get(bot_uid)
+            if state:
+                state['stop_auto'] = True
+                state['running'] = False
+                if state.get('task'):
+                    state['task'].cancel()
+                    state['task'] = None
+                del LEVEL_UP_STATES[bot_uid]
+            if bot:
+                bot['is_leveling_up'] = False
             return web.json_response({"success": True, "message": "Auto start stopped"})
             
         if not team_code:
             return web.json_response({"error": "Team Code required"}, status=400)
 
-        bot = None
-        for b in ACTIVE_BOTS:
-            if str(b['uid']) == str(bot_uid):
-                bot = b
-                break
-                
         if not bot:
-            return web.json_response({"error": "Bot not found or offline"}, status=400)
+            return web.json_response({"error": "Selected bot is not online"}, status=400)
             
-        if bot.get('is_level_up', False) or bot.get('is_busy', False):
-            return web.json_response({"error": "Bot is currently busy or already doing Level Up"}, status=400)
+        if bot.get('is_leveling_up'):
+            return web.json_response({"error": "Selected bot is already leveling up!"}, status=400)
 
-        bot['is_level_up'] = True
-        bot['is_busy'] = True
+        bot['is_leveling_up'] = True
         
-        task_info = {
-            'running': True,
-            'stop_auto': False,
-            'task': None,
+        LEVEL_UP_STATES[bot_uid] = {
+            'running': True, 
+            'stop_auto': False, 
+            'task': None, 
             'team_code': team_code,
             'games_played': 0,
-            'start_time': time.time(),
-            'bot_uid': bot_uid
+            'start_time': time.time()
         }
-        LEVEL_UP_TASKS[bot_uid] = task_info
         
-        async def web_auto_start_loop():
+        async def web_auto_start_loop(b, state):
             try:
-                while not task_info['stop_auto']:
-                    bot['is_busy'] = True
+                while not state['stop_auto']:
+                    b['is_busy'] = True
                     try:
-                        join_pkt = await join_teamcode_packet(team_code, bot['key'], bot['iv'], bot['region'])
-                        await SEndPacKeT(bot['state'], 'OnLine', join_pkt)
+                        join_pkt = await join_teamcode_packet(state['team_code'], b['key'], b['iv'], b['region'])
+                        await SEndPacKeT(b['state'], 'OnLine', join_pkt)
                         await asyncio.sleep(2.5)
                         
-                        if task_info['stop_auto']: break
+                        if state['stop_auto']: break
                         
-                        start_pkt = await start_auto_packet(bot['key'], bot['iv'], bot['region'])
+                        start_pkt = await start_auto_packet(b['key'], b['iv'], b['region'])
                         for i in range(40): 
-                            if task_info['stop_auto']: break
-                            await SEndPacKeT(bot['state'], 'OnLine', start_pkt)
+                            if state['stop_auto']: break
+                            await SEndPacKeT(b['state'], 'OnLine', start_pkt)
                             await asyncio.sleep(0.25)
                         
-                        if task_info['stop_auto']: break
+                        if state['stop_auto']: break
                         
-                        task_info['games_played'] += 1
+                        state['games_played'] += 1
                         await asyncio.sleep(wait_after_match) 
                         
-                        if task_info['stop_auto']: break
+                        if state['stop_auto']: break
                         
-                        leave_pkt = await leave_squad_packet(bot['key'], bot['iv'], bot['region'])
-                        await SEndPacKeT(bot['state'], 'OnLine', leave_pkt)
+                        leave_pkt = await leave_squad_packet(b['key'], b['iv'], b['region'])
+                        await SEndPacKeT(b['state'], 'OnLine', leave_pkt)
                         await asyncio.sleep(2.5)
-                    except Exception as e:
-                        print(f"Error in web auto start round: {e}")
-                        await asyncio.sleep(2.5)
+                    finally:
+                        b['is_busy'] = False
+                        
             except Exception as e:
-                print(f"Web Auto Start Critical Error: {e}")
+                print(f"Web Auto Start Critical Error for {b['uid']}: {e}")
             finally:
-                bot['is_busy'] = False
-                bot['is_level_up'] = False
-                if bot_uid in LEVEL_UP_TASKS:
-                    del LEVEL_UP_TASKS[bot_uid]
+                state['running'] = False
+                state['task'] = None
+                b['is_leveling_up'] = False
+                if b['uid'] in LEVEL_UP_STATES:
+                    del LEVEL_UP_STATES[b['uid']]
 
-        task_info['task'] = asyncio.create_task(web_auto_start_loop())
-        return web.json_response({"success": True, "message": f"Auto start initiated for {team_code} using Bot {bot_uid}"})
+        LEVEL_UP_STATES[bot_uid]['task'] = asyncio.create_task(web_auto_start_loop(bot, LEVEL_UP_STATES[bot_uid]))
+        return web.json_response({"success": True, "message": f"Auto start initiated for {team_code} with {bot_uid}"})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -947,7 +945,7 @@ async def handle_bots(request):
     if not check_auth(request):
         return web.json_response({"error": "Unauthorized Access"}, status=401)
     try:
-        bots = [{"uid": b['uid'], "region": b['region'], "is_busy": b.get('is_busy', False), "is_level_up": b.get('is_level_up', False)} for b in ACTIVE_BOTS]
+        bots = [{"uid": b['uid'], "region": b['region'], "is_busy": b.get('is_busy', False), "is_leveling_up": b.get('is_leveling_up', False)} for b in ACTIVE_BOTS]
         return web.json_response({"bots": bots})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
