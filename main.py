@@ -1059,20 +1059,21 @@ async def handle_rank_auto_start(request):
         
         async def web_rank_auto_start_loop(bots_to_join, st):
             try:
+                start_pkts = {}
                 for b in bots_to_join:
                     join_pkt = await join_teamcode_packet(st['team_code'], b['key'], b['iv'], b['region'])
                     await SEndPacKeT(b['state'], 'OnLine', join_pkt)
+                    start_pkts[b['uid']] = await start_auto_packet(b['key'], b['iv'], b['region'])
                     await asyncio.sleep(0.5)
 
                 await asyncio.sleep(2.0)
                 
                 while not st['stop_auto']:
                     for b in bots_to_join:
-                        start_pkt = await start_auto_packet(b['key'], b['iv'], b['region'])
                         try:
-                            await SEndPacKeT(b['state'], 'OnLine', start_pkt)
+                            await SEndPacKeT(b['state'], 'OnLine', start_pkts[b['uid']])
                         except: pass
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.15)
                         
             except Exception as e:
                 print(f"Rank Auto Start Error: {e}")
