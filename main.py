@@ -37,6 +37,23 @@ def load_all_credentials():
         return accounts
     except: return []
 
+def load_rank_credentials():
+    filename = "rank.json"
+    accounts = []
+    try:
+        if not os.path.exists(filename): return []
+        with open(filename, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                try:
+                    data = json.loads(line)
+                    for uid, password in data.items():
+                        accounts.append((uid, password))
+                except: continue
+        return accounts
+    except: return []
+
 EMOTES_DATA = load_emotes_from_json()
 NUMBER_EMOTES = EMOTES_DATA["numbers"]
 NAME_EMOTES = EMOTES_DATA["names"]
@@ -70,6 +87,7 @@ wait_after_match = 5
 start_spam_delay = 0.1
 region = 'IN'
 ACTIVE_BOTS = []
+RANK_BOTS = []
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "NIKI-BOT-2026")
 
@@ -536,8 +554,8 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                 except: pass
         await asyncio.sleep(reconnect_delay)
 
-async def run_bot_instance(uid, password):
-    print(f"🚀 Starting Bot Instance: {uid}")
+async def run_bot_instance(uid, password, is_rank=False):
+    print(f"🚀 Starting Bot Instance: {uid} (Rank: {is_rank})")
     while True:  # OUTER loop: Always reconnect, never give up
         bot_info = None
         chat_task = None
@@ -587,10 +605,13 @@ async def run_bot_instance(uid, password):
             ready = asyncio.Event()
             bot_state = {'online_writer': None, 'whisper_writer': None}
             bot_region = getattr(auth, 'region', 'IND')
-            bot_info = {'uid': uid, 'key': auth.key, 'iv': auth.iv, 'region': bot_region, 'state': bot_state, 'is_busy': False}
+            bot_info = {'uid': uid, 'key': auth.key, 'iv': auth.iv, 'region': bot_region, 'state': bot_state, 'is_busy': False, 'is_rank': is_rank}
             bot_state['bot_info'] = bot_info
-            ACTIVE_BOTS.append(bot_info)
-            print(f"✅ Bot {uid} ({bot_region}) is now Online!")
+            if is_rank:
+                RANK_BOTS.append(bot_info)
+            else:
+                ACTIVE_BOTS.append(bot_info)
+            print(f"✅ Bot {uid} ({bot_region}) is now Online! (Rank: {is_rank})")
 
             # --- Step 5: Watchdog — যদি দুটো connection-ই 45s ধরে dead থাকে → full re-login ---
             async def session_watchdog(b_state, b_uid):
@@ -633,8 +654,11 @@ async def run_bot_instance(uid, password):
             if watchdog_task and not watchdog_task.done(): watchdog_task.cancel()
         finally:
             # Always clean up from ACTIVE_BOTS before retry
-            if bot_info and bot_info in ACTIVE_BOTS:
-                ACTIVE_BOTS.remove(bot_info)
+            if bot_info:
+                if is_rank and bot_info in RANK_BOTS:
+                    RANK_BOTS.remove(bot_info)
+                elif not is_rank and bot_info in ACTIVE_BOTS:
+                    ACTIVE_BOTS.remove(bot_info)
         
         print(f"🔄 Bot {uid} re-logging in 5s...")
         await asyncio.sleep(5)
@@ -643,6 +667,7 @@ from aiohttp import web
 
 ACTIVE_GC_SESSIONS = {}
 LEVEL_UP_STATES = {}
+RANK_MODE_STATES = {}
 
 async def monitor_gc_session(team_code):
     while True:
@@ -991,6 +1016,98 @@ async def cors_middleware(request, handler):
         })
         raise ex
 
+async def handle_rank_auto_start(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
+    try:
+        data = await request.json()
+        action = data.get('action')
+        
+        if action == 'stop':
+            for tc, state in list(RANK_MODE_STATES.items()):
+                state['stop_auto'] = True
+            return web.json_response({"success": True, "message": "Rank Mode stopped"})
+            
+        team_code = data.get('team_code')
+        num_bots = int(data.get('num_bots', 1))
+        if num_bots > 3: num_bots = 3
+        if num_bots < 1: num_bots = 1
+        
+        if not team_code:
+            return web.json_response({"error": "Team Code required"}, status=400)
+            
+        if team_code in RANK_MODE_STATES:
+            return web.json_response({"error": "Already running for this team code"}, status=400)
+            
+        free_bots = [b for b in RANK_BOTS if not b.get('is_busy')]
+        if len(free_bots) < num_bots:
+            return web.json_response({"error": f"Only {len(free_bots)} free rank bots available"}, status=400)
+            
+        selected_bots = free_bots[:num_bots]
+        for b in selected_bots:
+            b['is_busy'] = True
+            
+        state = {
+            'running': True,
+            'stop_auto': False,
+            'task': None,
+            'team_code': team_code,
+            'bots': [b['uid'] for b in selected_bots],
+            'start_time': time.time()
+        }
+        RANK_MODE_STATES[team_code] = state
+        
+        async def web_rank_auto_start_loop(bots_to_join, st):
+            try:
+                for b in bots_to_join:
+                    join_pkt = await join_teamcode_packet(st['team_code'], b['key'], b['iv'], b['region'])
+                    await SEndPacKeT(b['state'], 'OnLine', join_pkt)
+                    await asyncio.sleep(0.5)
+
+                await asyncio.sleep(2.0)
+                
+                while not st['stop_auto']:
+                    for b in bots_to_join:
+                        start_pkt = await start_auto_packet(b['key'], b['iv'], b['region'])
+                        try:
+                            await SEndPacKeT(b['state'], 'OnLine', start_pkt)
+                        except: pass
+                    await asyncio.sleep(1.0)
+                        
+            except Exception as e:
+                print(f"Rank Auto Start Error: {e}")
+            finally:
+                for b in bots_to_join:
+                    try:
+                        leave_pkt = await leave_squad_packet(b['key'], b['iv'], b['region'])
+                        await SEndPacKeT(b['state'], 'OnLine', leave_pkt)
+                    except: pass
+                    b['is_busy'] = False
+                st['running'] = False
+                if st['team_code'] in RANK_MODE_STATES:
+                    del RANK_MODE_STATES[st['team_code']]
+
+        state['task'] = asyncio.create_task(web_rank_auto_start_loop(selected_bots, state))
+        return web.json_response({"success": True, "message": f"{num_bots} bots joined {team_code} in Rank Mode"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def handle_rank_bots(request):
+    if not check_auth(request):
+        return web.json_response({"error": "Unauthorized Access"}, status=401)
+    try:
+        bots = [{"uid": b['uid'], "is_busy": b.get('is_busy', False)} for b in RANK_BOTS]
+        active_sessions = []
+        for tc, st in RANK_MODE_STATES.items():
+            active_sessions.append({
+                "team_code": tc,
+                "bots": st['bots'],
+                "runtime": int(time.time() - st['start_time'])
+            })
+        return web.json_response({"bots": bots, "sessions": active_sessions})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 async def start_web_server():
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get('/', handle_ping)
@@ -1001,6 +1118,8 @@ async def start_web_server():
     app.router.add_post('/api/login', handle_login)
     app.router.add_get('/api/match_bot_stats', handle_match_bot_stats)
     app.router.add_post('/api/verify_github_pass', handle_verify_github_pass)
+    app.router.add_get('/api/rank_bots', handle_rank_bots)
+    app.router.add_post('/api/rank_auto_start', handle_rank_auto_start)
     
     port = int(os.environ.get("PORT", 8080))
     runner = web.AppRunner(app)
@@ -1021,18 +1140,20 @@ async def MaiiiinE():
     
     # Load accounts once
     accounts = load_all_credentials()
-    if not accounts:
-        print("❌ No accounts found in bot.txt! Cannot start.")
+    rank_accounts = load_rank_credentials()
+    if not accounts and not rank_accounts:
+        print("❌ No accounts found in bot.txt or rank.json! Cannot start.")
         # Keep the web server alive even if no accounts
         while True:
             await asyncio.sleep(60)
     
-    print(f"📝 Loaded {len(accounts)} accounts. Starting bots...")
+    print(f"📝 Loaded {len(accounts)} level-up accounts and {len(rank_accounts)} rank accounts. Starting bots...")
     
     # Each bot runs in its own infinite loop (never stops)
     while True:
         try:
             bot_tasks = [asyncio.create_task(run_bot_instance(uid, pwd)) for uid, pwd in accounts]
+            bot_tasks.extend([asyncio.create_task(run_bot_instance(uid, pwd, True)) for uid, pwd in rank_accounts])
             await asyncio.gather(*bot_tasks, return_exceptions=True)
             print("⚠️ All bot tasks ended. Restarting in 5s...")
         except Exception as e:
