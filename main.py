@@ -1057,13 +1057,6 @@ async def handle_rank_auto_start(request):
         }
         RANK_MODE_STATES[team_code] = state
         
-        async def bot_spam_task(b, start_pkt, st):
-            while not st['stop_auto']:
-                try:
-                    await SEndPacKeT(b['state'], 'OnLine', start_pkt)
-                except: pass
-                await asyncio.sleep(0.05)
-
         async def web_rank_auto_start_loop(bots_to_join, st):
             try:
                 start_pkts = {}
@@ -1071,19 +1064,16 @@ async def handle_rank_auto_start(request):
                     join_pkt = await join_teamcode_packet(st['team_code'], b['key'], b['iv'], b['region'])
                     await SEndPacKeT(b['state'], 'OnLine', join_pkt)
                     start_pkts[b['uid']] = await start_auto_packet(b['key'], b['iv'], b['region'])
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.5)
 
-                await asyncio.sleep(1.0)
-                
-                spam_tasks = []
-                for b in bots_to_join:
-                    spam_tasks.append(asyncio.create_task(bot_spam_task(b, start_pkts[b['uid']], st)))
+                await asyncio.sleep(2.0)
                 
                 while not st['stop_auto']:
-                    await asyncio.sleep(1.0)
-                    
-                for t in spam_tasks:
-                    t.cancel()
+                    for b in bots_to_join:
+                        try:
+                            await SEndPacKeT(b['state'], 'OnLine', start_pkts[b['uid']])
+                        except: pass
+                    await asyncio.sleep(0.15)
                         
             except Exception as e:
                 print(f"Rank Auto Start Error: {e}")
