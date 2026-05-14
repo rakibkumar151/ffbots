@@ -298,3 +298,36 @@ async def Emote_k(TarGeT, idT, K, V, region):
     fields = {1: 21, 2: {1: 804266360, 2: 909000001, 5: {1: TarGeT, 3: idT}}}
     packet_type = '0514' if region.lower() == "ind" else "0519" if region.lower() == "bd" else "0515"
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet_type, K, V)
+
+async def GenPlayerInfoPacket(target_uid, K, V):
+    fields = {1: int(target_uid)}
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), '1201', K, V)
+
+async def DecodePlayerInfo(data_hex):
+    try:
+        parsed = await DeCode_PackEt(data_hex)
+        if not parsed: return None
+        root = json.loads(parsed)
+        d = root.get("1", {}).get("data", {})
+        if not d: return None
+        def get_val(obj, fid):
+            val = obj.get(str(fid), {}).get("data")
+            if isinstance(val, str) and val.startswith("b'"): val = val[2:-1]
+            return val
+        prime_level = "N/A"
+        try:
+            p76 = d.get("76", {}).get("data", {})
+            prime_level = get_val(p76, 2)
+        except: pass
+        return {
+            "uid": get_val(d, 1),
+            "name": get_val(d, 3),
+            "level": get_val(d, 6),
+            "exp": get_val(d, 7),
+            "likes": get_val(d, 21),
+            "prime_level": prime_level,
+            "region": get_val(d, 5)
+        }
+    except Exception as e:
+        print(f"DecodePlayerInfo Error: {e}")
+        return None

@@ -234,6 +234,28 @@ async def GetLoginData(base_url, payload, token, Hr):
             print(f"Retrying GetLoginData via Proxy... {e}")
         await asyncio.sleep(2)
 
+async def GetPlayerInfo(base_url, target_uid, token, Hr):
+    try:
+        proxy = get_random_proxy()
+        # Ensure trailing slash
+        if not base_url.endswith('/'): base_url += '/'
+        url = f"{base_url}GetPlayerPersonalShow"
+        Hr['Authorization'] = f"Bearer {token}"
+        # Correct fields for GetPlayerPersonalShow based on logs: {1: UID, 2: 9, 3: 1, 4: 1}
+        packet = await CrEaTe_ProTo({1: int(target_uid), 2: 9, 3: 1, 4: 1})
+        payload = await encrypted_proto(packet)
+        
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(connector=get_connector()) as session:
+            async with session.post(url, data=payload, headers=Hr, proxy=proxy, timeout=timeout) as response:
+                if response.status == 200:
+                    resp_data = await response.read()
+                    # No decryption needed for this endpoint response
+                    return await DecodePlayerInfo(resp_data.hex())
+    except Exception as e:
+        print(f"GetPlayerInfo Error: {e}")
+    return None
+
 async def SEndPacKeT(bot_state, TypE, PacKeT):
     # Wait for connection if it's temporarily down (up to 8 seconds)
     for _ in range(40):
@@ -248,7 +270,7 @@ async def SEndPacKeT(bot_state, TypE, PacKeT):
                 key = 'whisper_writer' if TypE == 'ChaT' else 'online_writer'
                 bot_state[key] = None
         await asyncio.sleep(0.2)
-    raise Exception(f"❌ Error: {TypE} server disconnected after 8s wait")
+    raise Exception(f"[!] Error: {TypE} server disconnected after 8s wait")
 
 async def xAuThSTarTuP(TarGeT, token, timestamp, key, iv):
     uid_hex = hex(TarGeT)[2:]; uid_length = len(uid_hex); encrypted_timestamp = await DecodE_HeX(timestamp)
@@ -294,7 +316,7 @@ async def auto_start_loop(team_code, uid, chat_id, chat_type, key, iv, region, s
                 await SEndPacKeT(bot_state, 'OnLine', leave_pkt)
                 await asyncio.sleep(2)
             except Exception as e:
-                print(f"❌ auto_start_loop error: {e}")
+                print(f"[!] auto_start_loop error: {e}")
                 traceback.print_exc()
                 break
     finally:
@@ -321,13 +343,13 @@ async def TcPOnLine(ip, port, auth_token, bot_state, reconnect_delay=1.0):
             bot_state['online_writer'] = writer
             writer.write(bytes.fromhex(auth_token))
             await writer.drain()
-            print(f"✅ OnLine TCP connected to {ip}:{port}")
+            print(f"[OK] OnLine TCP connected to {ip}:{port}")
             # Keep reading to detect disconnect
             while True:
                 try:
                     data = await asyncio.wait_for(reader.read(9999), timeout=60)
                     if not data:
-                        print(f"⚠️ OnLine TCP: server closed connection. Reconnecting...")
+                        print(f"[!] OnLine TCP: server closed connection. Reconnecting...")
                         break
                 except asyncio.TimeoutError:
                     # Send a keepalive heartbeat every 60s to prevent idle timeout
@@ -339,7 +361,7 @@ async def TcPOnLine(ip, port, auth_token, bot_state, reconnect_delay=1.0):
                             break
                     continue
         except Exception as e:
-            print(f"🔴 OnLine TCP error: {e}. Reconnecting in {reconnect_delay}s...")
+            print(f"[!] OnLine TCP error: {e}. Reconnecting in {reconnect_delay}s...")
         finally:
             bot_state['online_writer'] = None
             if writer:
@@ -360,7 +382,7 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
             writer.write(bytes.fromhex(auth_token))
             await writer.drain()
             ready_event.set()
-            print(f"✅ ChaT TCP connected to {ip}:{port}")
+            print(f"[OK] ChaT TCP connected to {ip}:{port}")
             while True:
                 try:
                     data = await asyncio.wait_for(reader.read(9999), timeout=90)
@@ -370,9 +392,9 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                         try:
                             writer.write(b'')
                             await writer.drain()
-                            print("💓 ChaT heartbeat sent")
+                            print("[*] ChaT heartbeat sent")
                         except:
-                            print("⚠️ ChaT heartbeat failed, reconnecting...")
+                            print("[!] ChaT heartbeat failed, reconnecting...")
                             break
                     continue
                 if not data:
@@ -439,6 +461,85 @@ async def TcPChaT(ip, port, auth_token, key, iv, ready_event, region, bot_state,
                                 print(f"❌ /me command error: {e}")
                                 traceback.print_exc()
                                 await safe_send_message(proto.Data.chat_type, "[B][C][FF0000]❌ Execution Error!", uid, chat_id, key, iv, region, bot_state)
+
+                        elif inPuTMsG.startswith('/info'):
+                            parts = inPuTMsG.strip().split()
+                            target_uid = parts[1] if len(parts) > 1 else uid
+                            await safe_send_message(proto.Data.chat_type, f"[B][C][00FFFF]🔍 Fetching Info for {target_uid}...", uid, chat_id, key, iv, region, bot_state)
+                            
+                            bot_info = bot_state.get('bot_info')
+                            # We need the base_url, token, and headers from the bot instance
+                            # For simplicity, we can store these in bot_info or use globals
+                            # But wait, run_bot_instance has them locally.
+                            # Let's assume we can get them from bot_info if we store them there.
+                            
+                            try:
+                                base_url = bot_info.get('login_url', "https://client.ind.freefiremobile.com/")
+                                token = bot_info.get('token')
+                                hr = bot_info.get('headers')
+                                
+                                if not token or not hr:
+                                    await safe_send_message(proto.Data.chat_type, "[B][C][FF0000]❌ Bot not fully authenticated!", uid, chat_id, key, iv, region, bot_state)
+                                    continue
+                                    
+                                info = await GetPlayerInfo(base_url, target_uid, token, hr)
+                                
+                                # Fallback/Enhance with Scraper
+                                try:
+                                    import sys, os
+                                    scraper_dir = os.path.join(os.getcwd(), "New folder")
+                                    if scraper_dir not in sys.path: sys.path.append(scraper_dir)
+                                    from ff_info_api import get_player_info_from_site
+                                    scraped = get_player_info_from_site(target_uid)
+                                    if scraped and scraped.get('account'):
+                                        acc = scraped['account']
+                                        def find_val(label): return next((x.split(':', 1)[1].strip() for x in acc if label in x), "N/A")
+                                        
+                                        if not info:
+                                            info = {
+                                                "name": find_val('Name'),
+                                                "uid": target_uid,
+                                                "level": find_val('Level'),
+                                                "likes": find_val('Likes'),
+                                                "region": find_val('Region')
+                                            }
+                                        
+                                        # Enhance info with more details
+                                        info['honor'] = find_val('Honor Score')
+                                        info['br_rank'] = find_val('Current BR Rank')
+                                        info['br_points'] = find_val('BR Rank Point')
+                                        info['cs_points'] = find_val('CS Rank Point')
+                                        info['created'] = find_val('Account Created On')
+                                        info['last_login'] = find_val('Last Login')
+                                        info['bio'] = find_val('Bio')
+                                        info['bp_level'] = find_val('Booyah Pass Level')
+                                        info['bp_status'] = find_val('Booyah Pass Premium')
+                                        info['lang'] = find_val('Language')
+                                except: pass
+
+                                if info:
+                                    msg = (
+                                        f"[B][C][00FFFF]👤 PLAYER FULL PROFILE\n"
+                                        f"[FFFFFF]────────────────────\n"
+                                        f"[00FF00]Name: [FFFFFF]{info.get('name', 'N/A')}\n"
+                                        f"[00FF00]UID: [FFFFFF]{target_uid}\n"
+                                        f"[00FF00]Level: [FFFFFF]{info.get('level', 'N/A')} [Exp: {info.get('exp', 'N/A')}]\n"
+                                        f"[00FF00]Likes: [FFFFFF]{info.get('likes', 'N/A')}\n"
+                                        f"[00FF00]Honor Score: [FFFFFF]{info.get('honor', 'N/A')}\n"
+                                        f"[00FF00]BR Rank: [FFFFFF]{info.get('br_rank', 'N/A')} ({info.get('br_points', 'N/A')})\n"
+                                        f"[00FF00]CS Points: [FFFFFF]{info.get('cs_points', 'N/A')}\n"
+                                        f"[00FF00]Created: [FFFFFF]{info.get('created', 'N/A')}\n"
+                                        f"[00FF00]Last Login: [FFFFFF]{info.get('last_login', 'N/A')}\n"
+                                        f"[00FF00]BP Level: [FFFFFF]{info.get('bp_level', 'N/A')} ({info.get('bp_status', 'N/A')})\n"
+                                        f"[00FF00]Language: [FFFFFF]{info.get('lang', 'N/A')}\n"
+                                        f"[00FF00]Bio: [FFFFFF]{info.get('bio', 'N/A')}\n"
+                                        f"[FFFFFF]────────────────────"
+                                    )
+                                    await safe_send_message(proto.Data.chat_type, msg, uid, chat_id, key, iv, region, bot_state)
+                                else:
+                                    await safe_send_message(proto.Data.chat_type, "[B][C][FF0000]❌ Failed to fetch info! (Service Unavailable)", uid, chat_id, key, iv, region, bot_state)
+                            except Exception as e:
+                                await safe_send_message(proto.Data.chat_type, f"[B][C][FF0000]❌ Error: {str(e)}", uid, chat_id, key, iv, region, bot_state)
 
                         elif inPuTMsG.startswith('/e'):
                             parts = inPuTMsG.strip().split()
@@ -605,7 +706,18 @@ async def run_bot_instance(uid, password, is_rank=False):
             ready = asyncio.Event()
             bot_state = {'online_writer': None, 'whisper_writer': None}
             bot_region = getattr(auth, 'region', 'IND')
-            bot_info = {'uid': uid, 'key': auth.key, 'iv': auth.iv, 'region': bot_region, 'state': bot_state, 'is_busy': False, 'is_rank': is_rank}
+            bot_info = {
+                'uid': uid, 
+                'key': auth.key, 
+                'iv': auth.iv, 
+                'region': bot_region, 
+                'state': bot_state, 
+                'is_busy': False, 
+                'is_rank': is_rank,
+                'login_url': auth.url, # Use regional URL for subsequent requests
+                'token': auth.token,
+                'headers': Hr.copy()
+            }
             bot_state['bot_info'] = bot_info
             if is_rank:
                 RANK_BOTS.append(bot_info)
@@ -1127,7 +1239,7 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"🌐 Web API Server started on port {port}")
+    print(f"[*] Web API Server started on port {port}")
 
 async def MaiiiinE():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -1143,12 +1255,12 @@ async def MaiiiinE():
     accounts = load_all_credentials()
     rank_accounts = load_rank_credentials()
     if not accounts and not rank_accounts:
-        print("❌ No accounts found in bot.txt or rank.json! Cannot start.")
+        print("[!] No accounts found in bot.txt or rank.json! Cannot start.")
         # Keep the web server alive even if no accounts
         while True:
             await asyncio.sleep(60)
     
-    print(f"📝 Loaded {len(accounts)} level-up accounts and {len(rank_accounts)} rank accounts. Starting bots...")
+    print(f"[i] Loaded {len(accounts)} level-up accounts and {len(rank_accounts)} rank accounts. Starting bots...")
     
     # Each bot runs in its own infinite loop (never stops)
     while True:
@@ -1156,9 +1268,9 @@ async def MaiiiinE():
             bot_tasks = [asyncio.create_task(run_bot_instance(uid, pwd)) for uid, pwd in accounts]
             bot_tasks.extend([asyncio.create_task(run_bot_instance(uid, pwd, True)) for uid, pwd in rank_accounts])
             await asyncio.gather(*bot_tasks, return_exceptions=True)
-            print("⚠️ All bot tasks ended. Restarting in 5s...")
+            print("[!] All bot tasks ended. Restarting in 5s...")
         except Exception as e:
-            print(f"🔥 Critical Main Error: {e}. Auto-recovering in 5s...")
+            print(f"[!] Critical Main Error: {e}. Auto-recovering in 5s...")
         await asyncio.sleep(5)
 
 if __name__ == '__main__':
