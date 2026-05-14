@@ -21,15 +21,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import random
+
 @app.get("/info/{uid}")
 async def get_uid_info(uid: str):
     accounts = load_all_credentials()
     if not accounts:
         raise HTTPException(status_code=500, detail="No bot accounts available")
 
-    # Try each bot
+    # Shuffle accounts to spread the load across all bots (Multi-ID handling)
+    random.shuffle(accounts)
+
     for bot_uid, bot_pwd in accounts:
         try:
+            print(f"[*] Request for {uid} using bot {bot_uid}")
             open_id, access_token = await GeNeRaTeAccEss(bot_uid, bot_pwd)
             if not open_id: continue
             
@@ -53,15 +58,35 @@ async def get_uid_info(uid: str):
             info = await GetPlayerInfo(auth.url, uid, auth.token, Hr)
             
             if info:
-                # Add extra fields from scraper
+                # Add default values for extended fields
+                ext_fields = {
+                    'honor': 'N/A', 'br_rank': 'N/A', 'br_points': 'N/A', 
+                    'cs_points': 'N/A', 'created': 'N/A', 'last_login': 'N/A', 
+                    'bio': 'N/A', 'bp_level': 'N/A', 'bp_status': 'N/A', 'lang': 'N/A'
+                }
+                for k, v in ext_fields.items():
+                    if k not in info: info[k] = v
+
+                # Add extra fields from scraper (Robust error handling)
                 try:
-                    scraper_dir = os.path.join(os.getcwd(), "..", "New folder")
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    scraper_dir = os.path.join(current_dir, "..", "New folder")
                     if scraper_dir not in sys.path: sys.path.append(scraper_dir)
-                    from ff_info_api import get_player_info_from_site
-                    scraped = get_player_info_from_site(uid)
+                    
+                    # Force reload or clean import
+                    import ff_info_api
+                    import importlib
+                    importlib.reload(ff_info_api)
+                    
+                    scraped = ff_info_api.get_player_info_from_site(uid)
                     if scraped and scraped.get('account'):
                         acc = scraped['account']
-                        def find_val(label): return next((x.split(':', 1)[1].strip() for x in acc if label in x), "N/A")
+                        def find_val(label): 
+                            for x in acc:
+                                if label.lower() in x.lower():
+                                    if ':' in x: return x.split(':', 1)[1].strip()
+                            return "N/A"
+                        
                         info.update({
                             'honor': find_val('Honor Score'),
                             'br_rank': find_val('Current BR Rank'),
@@ -74,14 +99,16 @@ async def get_uid_info(uid: str):
                             'bp_status': find_val('Booyah Pass Premium'),
                             'lang': find_val('Language')
                         })
-                except: pass
+                except Exception as scraper_err:
+                    print(f"[!] Scraper failed for {uid}: {scraper_err}")
                 
+                print(f"[SUCCESS] Info fetched for {uid}")
                 return info
         except Exception as e:
-            print(f"Bot {bot_uid} failed: {e}")
+            print(f"[!] Bot {bot_uid} failed for {uid}: {e}")
             continue
 
-    raise HTTPException(status_code=404, detail="UID not found or service unavailable")
+    raise HTTPException(status_code=404, detail="UID not found or all bots are busy")
 
 if __name__ == "__main__":
     import uvicorn
