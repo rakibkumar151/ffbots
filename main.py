@@ -64,10 +64,10 @@ def get_random_color(): return "[00FF00]" # Fallback color
 def get_random_proxy():
     proxy_host = "change4.owlproxy.com"
     proxy_port = "7778"
-    proxy_pass = "2933445"
+    proxy_pass = "3129954"
     # Regenerate a fresh 8-digit SID to bypass blocks
     random_sid = random.randint(10000000, 99999999)
-    proxy_user = f"hr6ckDl06980_custom_zone_BR_st__city_sid_{random_sid}_time_5"
+    proxy_user = f"IzxWB0ZRPj80_custom_zone_BR_st__city_sid_{random_sid}_time_5"
     return f"http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
 
 def get_connector():
